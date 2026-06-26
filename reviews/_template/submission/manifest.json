@@ -1,0 +1,13 @@
+{
+  "case_id": "",
+  "source": {
+    "slack_permalink": "",
+    "onedrive_url": ""
+  },
+  "submitter": "",
+  "submitted_at": "",
+  "files": [
+    { "name": "", "sha256": "", "bytes_in_runtime": ".runtime/workspace/<case-id>/files/" }
+  ],
+  "_note": "只放指標——實體 bytes 永不進 git(CLAUDE.md 鐵律 #3)。"
+}

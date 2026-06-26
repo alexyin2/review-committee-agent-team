@@ -1,0 +1,13 @@
+# 自主閘的 git 化身:這些路徑的變更必須由指定的人 merge(配 branch protection)。
+# 把 @org/... 換成真正的 GitHub team / 帳號。
+
+# 「腦」——受治理、改得慢、要留痕
+/principles/   @org/review-committee
+/contracts/    @org/review-committee
+/rubrics/      @org/review-committee
+/agents/       @org/review-committee
+/skills/       @org/review-committee
+
+# go/no-go 裁決——真正的人簽閘(CLAUDE.md 鐵律 #1)
+# agent 可自動寫 findings,但動到 verdict 一定要人 merge
+/reviews/**/verdict/   @org/review-committee

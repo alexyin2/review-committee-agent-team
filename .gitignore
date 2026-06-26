@@ -1,0 +1,18 @@
+# 本機暫存與機密——永不進 git(CLAUDE.md 鐵律 #3)
+.runtime/
+*.secret
+secrets.toml
+orchestrator/config.toml      # 本機設定(含絕對路徑/頻道 id);範本是 config.example.toml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# OS
+.DS_Store
+
+# Claude Code 本機設定(per-developer 權限允許清單)
+.claude/settings.local.json

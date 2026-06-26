@@ -1,0 +1,3 @@
+# Step 1 — Slack 監聽神經
+slack-bolt>=1.18      # 內含 slack-sdk;提供 Socket Mode handler
+# tomllib 為 Python 3.11+ 內建,讀 config 不需額外套件

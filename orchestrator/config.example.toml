@@ -1,0 +1,22 @@
+# 複製成 config.toml(已 gitignore)。真正的 token 放 .runtime/secrets.toml,別放這。
+
+[repo]
+path = "/Users/you/Desktop/side_projects/review-committee-agent-team"
+default_branch = "main"
+
+[slack]
+# Socket Mode 需要兩個 token:bot token(xoxb-)與 app-level token(xapp-),放 secrets.toml
+review_channel = "C0XXXXXXX"   # 監聽哪個頻道
+# 哪些 case 預設 @ 哪位委員(也可由 verdict-policy 決定)
+default_reviewer = "U0XXXXXXX"
+
+[runtime]
+dir = ".runtime"               # queue / 下載副本 / log 都在這
+poll_interval_seconds = 10
+
+[review]
+# 內圈叫起 claude 的方式;model 分層見 design §10.6
+claude_cmd = "claude"
+lenses = ["security", "privacy", "legal", "ops"]
+# rubric 來源:讀 GitHub main(已治理),或本機 repo
+rubric_source = "local"        # local | github
