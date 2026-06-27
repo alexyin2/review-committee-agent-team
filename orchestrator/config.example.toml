@@ -17,6 +17,7 @@ poll_interval_seconds = 10
 [review]
 # 內圈叫起 claude 的方式;model 分層見 design §10.6
 claude_cmd = "claude"
+claude_model = "us.anthropic.claude-opus-4-8"   # 內圈審查用強模型(Bedrock 需 us.anthropic. 前綴;或用別名 "opus")
 lenses = ["security", "privacy", "legal", "ops"]
 # rubric 來源:讀 GitHub main(已治理),或本機 repo
 rubric_source = "local"        # local | github

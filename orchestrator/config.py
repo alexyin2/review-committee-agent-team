@@ -28,6 +28,7 @@ class Config:
         cfg = _load_toml(REPO_ROOT / "orchestrator" / "config.toml")
         runtime_cfg = cfg.get("runtime", {})
         slack_cfg = cfg.get("slack", {})
+        review_cfg = cfg.get("review", {})
 
         # .runtime 目錄(queue / 下載副本 / secrets / log)
         self.runtime_dir = REPO_ROOT / runtime_cfg.get("dir", ".runtime")
@@ -47,6 +48,17 @@ class Config:
         # 選填:限定監聽頻道 / 預設 @ 的委員
         self.review_channel = slack_cfg.get("review_channel", "")
         self.default_reviewer = slack_cfg.get("default_reviewer", "")
+
+        # 內圈叫起 claude 的方式 + model 分層(design §10.6)。環境變數可覆寫。
+        self.claude_cmd = os.environ.get("REVIEW_CLAUDE_CMD") or review_cfg.get(
+            "claude_cmd", "claude"
+        )
+        self.claude_model = os.environ.get("REVIEW_CLAUDE_MODEL") or review_cfg.get(
+            "claude_model", "us.anthropic.claude-opus-4-8"
+        )
+        self.rubric_source = review_cfg.get("rubric_source", "local")
+        # 本切片只跑 security;config 可列更多維度供 dashboard / 未來 fan-out 用。
+        self.review_lenses = review_cfg.get("lenses", ["security"])
 
     # ---- 衍生路徑 ----
     @property
