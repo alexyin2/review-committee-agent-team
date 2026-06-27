@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,8 +32,21 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SEVERITY_ORDER = ["blocker", "high", "medium", "low", "info"]
 
-# pipeline 階段(對應 run-review:intake → fan-out lenses → synthesize → 人簽)
-WORKFLOW_STAGES = ["Intake", "Review", "Synthesize", "Sign-off"]
+# CAB 兩道關卡(對應公司實際流程:CAB1→UT、CAB2→PROD)
+CAB_GATES = [
+    {"id": "CAB1", "name": "CAB1", "env": "UT", "desc": "部署到 UT(測試)環境前的審查關卡"},
+    {"id": "CAB2", "name": "CAB2", "env": "PROD", "desc": "部署到 PROD(正式)環境前的審查關卡"},
+]
+# 每道 CAB 的四步流程
+CAB_WORKFLOW = ["提案", "文件 Review", "審核會議", "會議記錄"]
+
+# 審核部門 = lens。lens 內部代碼 → 部門中文名。
+DEPARTMENTS = [
+    {"lens": "security", "name": "資安", "full": "資訊安全", "has_rubric": True},
+    {"lens": "risk", "name": "風管", "full": "風險管理", "has_rubric": False},
+    {"lens": "legal", "name": "法遵", "full": "法令遵循", "has_rubric": False},
+]
+DEPT_BY_LENS = {d["lens"]: d for d in DEPARTMENTS}
 
 
 def _git(args: list[str]) -> subprocess.CompletedProcess:
@@ -218,8 +232,15 @@ def _collect_case(case_id: str, branch: str | None, status: str, lenses: list[st
             continue
         lens_present[lens] = True
         for f in doc.get("findings", []):
+            # source_doc:優先用 finding 自帶,否則從 evidence 推(取「檔名.ext」),再否則用第一份提交檔
+            src_doc = f.get("source_doc", "")
+            if not src_doc:
+                m = re.search(r"([\w\-]+\.(?:pdf|md|docx?|xlsx?|txt))", f.get("evidence", ""))
+                src_doc = m.group(1) if m else ""
             findings.append({
                 "lens": doc.get("lens", lens),
+                "cab": f.get("cab", "CAB1"),      # 真實 pipeline 目前產 CAB1(UT)階段
+                "source_doc": src_doc,
                 "id": f.get("id", ""),
                 "severity": f.get("severity", "info"),
                 "title": f.get("title", ""),
@@ -244,7 +265,7 @@ def _collect_case(case_id: str, branch: str | None, status: str, lenses: list[st
         submission = [{"name": f.name, "bytes": f.stat().st_size}
                       for f in sorted(ws_files.iterdir()) if f.is_file()]
 
-    return {
+    case = {
         "case_id": case_id,
         "project_id": project_id,
         "project_name": project_name,
@@ -259,6 +280,65 @@ def _collect_case(case_id: str, branch: str | None, status: str, lenses: list[st
         "blockers": tally["blocker"],
         "submission": submission,
     }
+    case["cabs"] = _build_cabs(case)
+    return case
+
+
+def _dept_verdict(findings: list[dict]) -> str:
+    """單一部門依其 findings 推一個建議(部門在審核會議上給的意見)。"""
+    sev = {f["severity"] for f in findings}
+    if "blocker" in sev:
+        return "no-go"
+    if "high" in sev:
+        return "conditional-go"
+    return "go"
+
+
+def _build_cabs(case: dict) -> list[dict]:
+    """把一個 case 的扁平 findings 組成 CAB1/CAB2 兩道關卡的結構。
+
+    每道關卡 = 4 步 workflow + 兩種切法:
+      - 文件 Review(by 文件):該 CAB 下每份文件 + 指向它的 findings
+      - 審核會議(by 部門):三個部門(風管/資安/法遵)各自的 Agent 模擬建議
+    """
+    cabs = []
+    for gate in CAB_GATES:
+        gf = [f for f in case["findings"] if f.get("cab", "CAB1") == gate["id"]]
+        # 文件視角
+        docs = {}
+        for f in gf:
+            d = f.get("source_doc") or "(未標來源)"
+            docs.setdefault(d, []).append(f)
+        doc_view = [{"doc": d, "findings": fs,
+                     "blockers": sum(1 for x in fs if x["severity"] == "blocker")}
+                    for d, fs in sorted(docs.items())]
+        # 部門視角(審核會議:Agent 模擬各部門意見)
+        dept_view = []
+        for dept in DEPARTMENTS:
+            df = [f for f in gf if f["lens"] == dept["lens"]]
+            dept_view.append({
+                "lens": dept["lens"], "name": dept["name"], "full": dept["full"],
+                "has_rubric": dept["has_rubric"],
+                "findings": df,
+                "advice": _dept_verdict(df) if df else ("go" if dept["has_rubric"] else "pending"),
+                "covered": bool(df) or dept["has_rubric"],
+            })
+        # 該 CAB 的狀態:有任何 finding 即視為已審;有 blocker → 卡關
+        has_findings = bool(gf)
+        blockers = sum(1 for f in gf if f["severity"] == "blocker")
+        cabs.append({
+            "id": gate["id"], "name": gate["name"], "env": gate["env"], "desc": gate["desc"],
+            "workflow": CAB_WORKFLOW,
+            "reviewed": has_findings,
+            "blockers": blockers,
+            "verdict": "no-go" if blockers else ("conditional-go"
+                       if any(f["severity"] == "high" for f in gf) else
+                       ("go" if has_findings else "pending")),
+            "doc_view": doc_view,
+            "dept_view": dept_view,
+            "finding_count": len(gf),
+        })
+    return cabs
 
 
 def collect() -> dict:
@@ -277,10 +357,12 @@ def collect() -> dict:
 
     awaiting = [c for c in cases if c["status"] == "awaiting-signoff"]
     decided = [c for c in cases if c["status"] == "decided"]
+    # lens 健康度按「部門」算:該部門有產出 findings 的 case 數
     lens_health = {
-        lens: {"produced": sum(1 for c in cases if c["lens_present"].get(lens)),
-               "total": len(cases)}
-        for lens in lenses
+        d["name"]: {"produced": sum(1 for c in cases
+                                    if any(f["lens"] == d["lens"] for f in c.get("findings", []))),
+                    "total": len(cases), "has_rubric": d["has_rubric"]}
+        for d in DEPARTMENTS
     }
 
     # 專案分組:一個專案(產品/系統)→ 其歷次審查(reviews)
@@ -306,7 +388,9 @@ def collect() -> dict:
 
     return {
         "lenses": lenses,
-        "workflow_stages": WORKFLOW_STAGES,
+        "departments": DEPARTMENTS,
+        "cab_gates": CAB_GATES,
+        "cab_workflow": CAB_WORKFLOW,
         "cases": cases,
         "projects": project_list,
         "skills": _skills_inventory(),
@@ -330,52 +414,63 @@ def _apply_demo_seed(data: dict) -> dict:
     讓「專案 → 歷次審查」「排程」「skills」整個 IA 都看得到。
     僅在 --demo 時呼叫;正式產線(無旗標)只吐真實資料。
     """
-    # 把唯一真實 case 歸到「Payments Service」專案,讓它有歸屬
+    def mk(lens, fid, sev, title, rec, doc, cab, ref, demo=True):
+        return {"lens": lens, "cab": cab, "source_doc": doc, "id": fid, "severity": sev,
+                "title": title, "rationale": f"(示意)對應 {lens} 部門 rubric {ref}。",
+                "recommendation": rec, "evidence": f"{doc}(示意)", "rubric_ref": ref, "demo": demo}
+
+    # 真實 case → 歸到「Payments Service」;其真實 findings 全屬 CAB1/資安。
+    # 再掺示意的風管/法遵(CAB1)與 CAB2 全套,讓 CAB×部門×文件 結構完整可見。
     for c in data["cases"]:
         c["project_id"] = "payments-service"
         c["project_name"] = "Payments Service"
         c["demo"] = False
+        for f in c["findings"]:           # 真實 findings 補欄位
+            f.setdefault("cab", "CAB1")
+            f.setdefault("source_doc", "launch-doc.md")
+            f["demo"] = False
+        # CAB1 補風管/法遵(示意)
+        c["findings"] += [
+            mk("risk", "risk-001", "high", "缺營運中斷影響評估(BIA)", "補 BIA 與回復時間目標 RTO。", "launch-doc.md", "CAB1", "risk-bia"),
+            mk("legal", "legal-001", "medium", "個資蒐集告知不足", "補個資告知與同意機制說明。", "launch-doc.md", "CAB1", "legal-pdpa"),
+        ]
+        # CAB2(PROD)整套示意 — 大多已收斂,僅少量 high/medium
+        c["findings"] += [
+            mk("security", "sec-c2-001", "high", "PROD 金鑰輪換週期未定義", "訂定金鑰輪換政策。", "prod-runbook.pdf", "CAB2", "sec-secret"),
+            mk("risk", "risk-c2-001", "medium", "上線回退(rollback)演練未紀錄", "補回退演練紀錄。", "prod-runbook.pdf", "CAB2", "risk-rollback"),
+            mk("legal", "legal-c2-001", "low", "資料保存期限文件待補", "補保存期限政策。", "prod-dpa.pdf", "CAB2", "legal-retention"),
+        ]
+        c["submission"] = (c.get("submission") or []) + [
+            {"name": "prod-runbook.pdf", "bytes": 51200, "demo": True},
+            {"name": "prod-dpa.pdf", "bytes": 20480, "demo": True},
+        ]
+        c["cabs"] = _build_cabs(c)         # findings 變了,重建 CAB 結構
 
-    # 為「Payments Service」補一筆較早、已裁決的歷史審查(示意)
-    seed_cases = [
-        {
-            "case_id": "2026-0312-101500-PAYMENTS-V1",
-            "project_id": "payments-service", "project_name": "Payments Service",
-            "status": "decided", "branch": "main", "verdict": "conditional-go",
-            "verdict_md": "# 上線審查推薦 — Payments Service v1.0\n\n## 推薦:帶條件 GO\n無 blocker;2 個 high 須在上線前降級。\n（示意歷史資料）",
-            "readme_md": "", "demo": True,
-            "findings": [
-                {"lens":"security","id":"sec-101","severity":"high","title":"TLS 設定未強制最低版本",
-                 "rationale":"對應 rubric sec-data。","recommendation":"強制 TLS1.2+。",
-                 "evidence":"v1.0-design.pdf p.4","rubric_ref":"sec-data"},
-                {"lens":"security","id":"sec-102","severity":"medium","title":"日誌保留政策未定義",
-                 "rationale":"對應 rubric sec-logging。","recommendation":"訂定保留期。",
-                 "evidence":"v1.0-ops.md","rubric_ref":"sec-logging"},
-            ],
-            "severity": {"blocker":0,"high":1,"medium":1,"low":0,"info":0},
-            "lens_present": {"security": True}, "blockers": 0,
-            "submission": [{"name":"v1.0-design.pdf","bytes":184320},{"name":"v1.0-ops.md","bytes":4096}],
-        },
-    ]
-    # 另一個完全示意的專案,展示多專案牌牆
-    seed_cases.append({
-        "case_id": "2026-0620-090000-NOTIFY-V2",
-        "project_id": "notification-hub", "project_name": "Notification Hub",
-        "status": "decided", "branch": "main", "verdict": "go",
-        "verdict_md": "# 上線審查推薦 — Notification Hub v2\n\n## 推薦:GO\n僅低風險建議。（示意資料）",
-        "readme_md": "", "demo": True,
+    # 第二個完全示意專案,展示多專案牌牆
+    notify = {
+        "case_id": "2026-0620-090000-NOTIFY", "project_id": "notification-hub",
+        "project_name": "Notification Hub", "status": "decided", "branch": "main",
+        "verdict": "go", "verdict_md": "", "readme_md": "", "demo": True,
         "findings": [
-            {"lens":"security","id":"sec-201","severity":"low","title":"建議補上 rate limiting 文件",
-             "rationale":"對應 rubric sec-authz。","recommendation":"補文件。",
-             "evidence":"缺證據:提交未提及","rubric_ref":"sec-authz"},
+            mk("security", "sec-n1", "low", "建議補 rate limiting 文件", "補文件。", "notify-design.pdf", "CAB1", "sec-authz"),
+            mk("risk", "risk-n1", "low", "監控告警門檻待確認", "確認門檻。", "notify-ops.md", "CAB1", "risk-monitoring"),
+            mk("security", "sec-n2", "medium", "PROD CORS 設定過寬", "收斂允許來源。", "notify-prod.pdf", "CAB2", "sec-data"),
         ],
-        "severity": {"blocker":0,"high":0,"medium":0,"low":1,"info":0},
-        "lens_present": {"security": True}, "blockers": 0,
-        "submission": [{"name":"notify-v2-pack.pdf","bytes":98304}],
-    })
+        "severity": {}, "lens_present": {}, "blockers": 0,
+        "submission": [{"name":"notify-design.pdf","bytes":40960,"demo":True},
+                       {"name":"notify-ops.md","bytes":3072,"demo":True},
+                       {"name":"notify-prod.pdf","bytes":15360,"demo":True}],
+    }
+    notify["severity"] = {s: sum(1 for f in notify["findings"] if f["severity"] == s) for s in SEVERITY_ORDER}
+    notify["blockers"] = notify["severity"]["blocker"]
+    notify["cabs"] = _build_cabs(notify)
+    data["cases"].append(notify)
 
-    data["cases"].extend(seed_cases)
-    # 重新分組(重用 collect 的邏輯太繞,這裡就地重建 projects)
+    # 真實 case 的 severity/blockers 也要把示意 findings 算進去(供牌牆顯示)
+    for c in data["cases"]:
+        c["severity"] = {s: sum(1 for f in c["findings"] if f["severity"] == s) for s in SEVERITY_ORDER}
+        c["blockers"] = c["severity"]["blocker"]
+
     return _regroup(data)
 
 
@@ -426,11 +521,15 @@ def sanitize_public(data: dict) -> dict:
             "review_count": p["review_count"], "open_count": p["open_count"],
             "latest_verdict": p["latest_verdict"], "total_blockers": p["total_blockers"],
         } for p in data.get("projects", [])],
-        # 審查:只留狀態 + severity 分布(數字),不留 findings 內文/verdict/底稿
+        "departments": data.get("departments", []),
+        "cab_gates": data.get("cab_gates", []),
+        "cab_workflow": data.get("cab_workflow", []),
+        # 審查:只留狀態 + severity 分布 + CAB 結構彙總(數字),不留 findings 內文/verdict/底稿
         "cases": [{
             "case_id": c["case_id"], "project_id": c["project_id"], "project_name": c["project_name"],
             "status": c["status"], "verdict": c["verdict"], "severity": c["severity"],
             "blockers": c["blockers"], "finding_count": len(c["findings"]), "demo": c.get("demo", False),
+            "cabs": [_sanitize_cab(cab) for cab in c.get("cabs", [])],
         } for c in data.get("cases", [])],
         # skills:只留名稱/路徑/最近變更(本來就是 git 公開資訊),不含 rubric 內文
         "skills": data.get("skills", {}),
@@ -439,9 +538,25 @@ def sanitize_public(data: dict) -> dict:
                       for p in data.get("proposals", [])],
         "feedback_summary": {"total": data.get("feedback_summary", {}).get("total", 0)},
         "rubric_changes_30d": data["summary"].get("rubric_changes_30d", 0),
-        "workflow_stages": data.get("workflow_stages", []),
     }
     return pub
+
+
+def _sanitize_cab(cab: dict) -> dict:
+    """消毒 CAB 結構:保留關卡/部門/文件的**結構與數字**,移除 findings 內文。"""
+    return {
+        "id": cab["id"], "name": cab["name"], "env": cab["env"], "desc": cab["desc"],
+        "workflow": cab["workflow"], "reviewed": cab["reviewed"],
+        "blockers": cab["blockers"], "verdict": cab["verdict"], "finding_count": cab["finding_count"],
+        # 文件視角:檔名可能本身洩漏資訊 → 遮成代號(文件 1/2…),只留結構與數字
+        "doc_view": [{"doc": f"文件 {i+1}", "finding_count": len(d["findings"]), "blockers": d["blockers"]}
+                     for i, d in enumerate(cab.get("doc_view", []))],
+        # 部門視角:只留部門名 + 建議 + finding 數(不留 findings 內文)
+        "dept_view": [{"lens": dv["lens"], "name": dv["name"], "full": dv["full"],
+                       "has_rubric": dv["has_rubric"], "advice": dv["advice"],
+                       "covered": dv["covered"], "finding_count": len(dv["findings"])}
+                      for dv in cab.get("dept_view", [])],
+    }
 
 
 def main() -> None:
