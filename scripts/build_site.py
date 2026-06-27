@@ -53,12 +53,13 @@ def _review_branches() -> list[dict]:
     for b in (l.strip() for l in local.splitlines()):
         if b:
             seen.setdefault(b[len("review/"):], b)
-    # 再補遠端 tracking refs
-    remote = _git(["for-each-ref", "--format=%(refname:short)", "refs/remotes/*/review/"]).stdout
+    # 再補遠端 tracking refs。注意:for-each-ref 的 pattern 不支援中間的 '*' 萬用字元
+    # (refs/remotes/*/review/ 會匹配到空),要用前綴 refs/remotes/ 再自行過濾。
+    remote = _git(["for-each-ref", "--format=%(refname:short)", "refs/remotes/"]).stdout
     for b in (l.strip() for l in remote.splitlines()):
-        if not b:
+        if not b or "/review/" not in b:
             continue
-        case_id = b.split("/review/", 1)[1] if "/review/" in b else b
+        case_id = b.split("/review/", 1)[1]
         seen.setdefault(case_id, b)  # 用完整 ref(如 origin/review/xxx)供 git show
     return [{"ref": ref, "case_id": cid} for cid, ref in seen.items()]
 
