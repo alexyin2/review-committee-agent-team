@@ -42,6 +42,65 @@ def run_digest(case: dict) -> str:
     return summary
 
 
+def run_feedback_synthesis(case: dict) -> str:
+    """排程:彙整委員回饋 → 草擬 rubric/skill 修改提案(類 PR-skill 動作)。
+
+    架構轉向(memory architecture-centralized-feedback-loop):中央定期跑這隻,把累積的
+    Slack 1:1 回饋按指向的 rubric_ref 分組,產出「修改提案」草稿。
+    **提案不自動套用** —— 由人覆核(走 skills/rubrics 的 CODEOWNERS 人 merge 閘)才生效。
+
+    本切片做確定性彙整 + 產出提案草稿(.runtime/feedback/proposals/);把草稿變成真正的
+    rubric diff + 開 PR 是更重的一步(可叫內圈 claude),屬後續。
+    """
+    from . import feedback_store
+
+    fb = feedback_store.all_feedback()
+    if not fb:
+        return "🧩 feedback-synthesis:目前沒有累積回饋,無提案。"
+
+    # 按 target(rubric_ref / finding id)分組
+    groups: dict[str, list[dict]] = {}
+    for e in fb:
+        key = e.get("target") or "(未指定)"
+        groups.setdefault(key, []).append(e)
+
+    proposals_dir = REPO_ROOT / ".runtime" / "feedback" / "proposals"
+    proposals_dir.mkdir(parents=True, exist_ok=True)
+    generated_at = case.get("generated_at", "(scheduled)")
+
+    proposals = []
+    for target, items in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        lines = [
+            f"# Skill 修改提案 — {target}",
+            "",
+            f"> 由 feedback-synthesis 於 {generated_at} 自動彙整,**待人覆核**。",
+            f"> 來源:{len(items)} 條委員回饋。是否調整 rubric/skill 由人 merge 決定(CODEOWNERS)。",
+            "",
+            "## 彙整的回饋",
+            "",
+        ]
+        for e in items:
+            lines.append(f"- 「{e['text']}」 — {e['reviewer']}（{e.get('when','')}，case {e['case_id']}）")
+        lines += [
+            "",
+            "## 建議動作(草案)",
+            "",
+            f"- 檢視 `rubrics/` 中對應 `{target}` 的條目,評估是否依上述回饋調整判準或補充要求。",
+            "- 若採納:開 PR 修改 rubric → 指定委員 merge,下次審查自動吃新版(thin-shim)。",
+            "- 若不採納:在本提案註記原因後關閉。",
+            "",
+        ]
+        slug = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in target)
+        path = proposals_dir / f"{slug}.md"
+        path.write_text("\n".join(lines), encoding="utf-8")
+        proposals.append({"target": target, "count": len(items), "path": str(path)})
+
+    head = (f"🧩 feedback-synthesis:從 {len(fb)} 條回饋彙整出 {len(proposals)} 份 skill 修改提案"
+            f"(待人覆核)。")
+    detail = "；".join(f"{p['target']}（{p['count']} 條）" for p in proposals)
+    return head + "\n  提案:" + detail
+
+
 def run_reminder(case: dict) -> str:
     """逾期審查提醒(骨架)。未來:掃 awaiting-signoff 超過 N 天 → @委員。"""
     return "⏰ reminder 任務尚未實作(骨架)。"
@@ -55,6 +114,7 @@ def run_patrol(case: dict) -> str:
 # worker.run_once 依 type 查這張表
 HANDLERS = {
     "digest": run_digest,
+    "feedback-synthesis": run_feedback_synthesis,
     "reminder": run_reminder,
     "patrol": run_patrol,
 }

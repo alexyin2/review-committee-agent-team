@@ -1,0 +1,59 @@
+# GitHub Pages 部署 —— 只發佈「消毒過的公開版」靜態站(design §8 L2)。
+#
+# ⚠️ 重大隱私前提:個人帳號的 Pages **無法設私有**(私有 Pages 僅 Enterprise Cloud)。
+#    所以這裡發佈的 site 內容由 build_site.py --public 產生,
+#    **只含彙總數字 / 結構名稱,不含 findings 內文、evidence、verdict 全文、底稿**。
+#    完整版(含機敏)只在桌機本機 / 內部跑,不經這條。
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "scripts/build_site.py"
+      - "reviews/**"
+      - "rubrics/**"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # build_site 要看 review/* 分支與 git log
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 預烤公開版 data.js(消毒)
+        run: |
+          python scripts/build_site.py --public --generated-at "$(date -u '+%Y-%m-%d %H:%M:%SZ')"
+
+      - name: 防呆 — 確認公開版不含機敏內文
+        run: |
+          if grep -qE 'rationale|evidence|recommendation|verdict_md' site/data.js; then
+            echo "::error::site/data.js 疑似含機敏內文,中止部署"; exit 1
+          fi
+          echo "公開版檢查通過,無機敏內文。"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

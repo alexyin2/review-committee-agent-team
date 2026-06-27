@@ -20,6 +20,7 @@ from .config import config
 
 JOBS = {
     "daily-digest": "digest",
+    "feedback-synthesis": "feedback-synthesis",
     "overdue-reminder": "reminder",
     "submission-patrol": "patrol",
 }

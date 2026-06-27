@@ -94,11 +94,44 @@ def handle_mention(event, say, client, logger):
     logger.info("已入列 case=%s files=%d", case_id, len(saved))
 
 
+def handle_feedback_message(event, say, logger):
+    """委員 1:1 / thread 回饋 → 落中央 feedback store(架構轉向:不走個人訂閱)。
+
+    僅處理「真人發的訊息」:略過 bot 自己、略過 app_mention(那條由 handle_mention 處理)。
+    DM(channel_type == 'im')或審查 thread 內的回覆都當回饋收。
+    case 歸屬:thread_ts 對應的 case(若能對上);對不上就記為一般回饋。
+    """
+    from . import feedback_store
+
+    if event.get("bot_id") or event.get("subtype"):
+        return  # bot 訊息 / 編輯刪除等子型別,略過
+    text = (event.get("text") or "").strip()
+    if not text:
+        return
+
+    reviewer = event.get("user", "")
+    channel_type = event.get("channel_type", "")
+    thread_ts = event.get("thread_ts")
+
+    # 只收 DM 或 thread 回覆當回饋;頻道裡的一般發言不收(避免噪音)
+    if channel_type != "im" and not thread_ts:
+        return
+
+    # 嘗試由 thread_ts 對回 case(listener 入列時 thread_ts = 原訊息 ts)
+    case_id = None  # 對應邏輯可後續用 queue/reviews 索引補上;先記一般回饋
+    feedback_store.record_feedback(
+        case_id=case_id, reviewer=reviewer, text=text, source="slack",
+    )
+    logger.info("已記錄 feedback reviewer=%s len=%d", reviewer, len(text))
+    say(thread_ts=thread_ts, text="🗒️ 收到你的回饋,已記入中央 feedback。排程的彙整 agent 會把它納入下次 skill 檢視(由人覆核)。")
+
+
 def build_app() -> App:
     """延後建立 App,並關掉建構期的 auth.test(否則 import/啟動都要先連網)。
     真正的認證在 Socket Mode 連線時發生。"""
     app = App(token=config.slack_bot_token, token_verification_enabled=False)
     app.event("app_mention")(handle_mention)
+    app.event("message")(handle_feedback_message)
     return app
 
 

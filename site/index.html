@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Review Committee — Agent Workbench</title>
+<style>
+  :root {
+    --terracotta: #c9694a; --terracotta-soft: #d98c6f;
+    --paper: #faf7f2; --paper-card: #ffffff; --sidebar: #f3ede4;
+    --ink: #2b2724; --ink-soft: #6b635c; --hairline: #e8e1d8;
+    --green: #4f9d77; --green-bg: #e9f3ec; --amber: #c98a2b; --amber-bg: #f8efe0;
+    --red: #c0473a; --red-bg: #f8e7e4; --blocker: #b23b34;
+    --serif: "Iowan Old Style","Palatino Linotype","Georgia",serif;
+    --sans: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;
+    --mono: "SF Mono","JetBrains Mono","Menlo",monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--terracotta); font-family: var(--sans); color: var(--ink); min-height: 100vh; padding: 24px; }
+  .app { background: var(--paper); border-radius: 18px; max-width: 1280px; margin: 0 auto;
+         min-height: calc(100vh - 48px); box-shadow: 0 30px 80px rgba(0,0,0,.22); overflow: hidden;
+         display: grid; grid-template-columns: 232px 1fr; }
+
+  /* ── 左側主導覽 ── */
+  aside { background: var(--sidebar); border-right: 1px solid var(--hairline); padding: 22px 16px; }
+  .brand { display: flex; align-items: center; gap: 11px; margin-bottom: 26px; padding: 0 6px; }
+  .brand .logo { width: 36px; height: 36px; border-radius: 9px; background: var(--terracotta); color: #fff;
+                 display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+  .brand .name { font-family: var(--serif); font-size: 15.5px; line-height: 1.1; }
+  .brand .sub { font-size: 10px; letter-spacing: .12em; color: var(--ink-soft); text-transform: uppercase; }
+  .nav-group { margin-bottom: 18px; }
+  .nav-group .gl { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); padding: 0 10px 6px; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; font-size: 13.5px;
+              color: var(--ink-soft); cursor: pointer; margin-bottom: 2px; }
+  .nav-item:hover { background: rgba(0,0,0,.04); color: var(--ink); }
+  .nav-item.active { background: var(--paper-card); color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  .nav-item .ic { width: 16px; text-align: center; }
+  .nav-item .badge { margin-left: auto; background: var(--terracotta); color: #fff; font-size: 10px; border-radius: 10px; padding: 1px 7px; }
+  aside .foot { position: relative; margin-top: 24px; padding: 12px 10px 0; border-top: 1px solid var(--hairline);
+                font-size: 11px; color: var(--ink-soft); }
+
+  /* ── 主內容 ── */
+  main { padding: 26px 32px 40px; overflow-y: auto; }
+  .crumbs { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 10px; }
+  .crumbs a { color: var(--ink-soft); text-decoration: none; cursor: pointer; }
+  .crumbs a:hover { color: var(--terracotta); }
+  .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+  .page-title { font-family: var(--serif); font-size: 28px; line-height: 1.12; }
+  .page-meta { font-size: 12.5px; color: var(--ink-soft); margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .page-meta b { color: var(--ink); font-weight: 600; }
+  .btn-run { background: #211c19; color: #fff; border: none; border-radius: 24px; padding: 10px 19px; font-size: 13px;
+             cursor: pointer; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .btn-run:hover { background: #000; }
+
+  .context-bar { border: 1px solid var(--hairline); border-radius: 12px; background: var(--paper-card);
+                 padding: 11px 16px; margin-bottom: 20px; font-size: 12.5px; color: var(--ink-soft);
+                 display: flex; gap: 20px; flex-wrap: wrap; }
+  .context-bar b { color: var(--ink); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(258px,1fr)); gap: 16px; }
+  .card { border: 1px solid var(--hairline); border-radius: 14px; background: var(--paper-card); padding: 18px;
+          cursor: pointer; transition: transform .12s, box-shadow .12s, border-color .12s; }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(0,0,0,.08); border-color: var(--terracotta-soft); }
+  .card.flat { cursor: default; } .card.flat:hover { transform: none; box-shadow: none; border-color: var(--hairline); }
+
+  .pill { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; display: inline-flex; align-items: center; gap: 6px; }
+  .pill .sdot { width: 8px; height: 8px; border-radius: 50%; }
+  .pill.awaiting { color: var(--amber); } .pill.awaiting .sdot { background: var(--amber); }
+  .pill.decided { color: var(--green); } .pill.decided .sdot { background: var(--green); }
+  .pill.idle { color: var(--ink-soft); } .pill.idle .sdot { background: var(--ink-soft); }
+
+  .ctitle { font-family: var(--serif); font-size: 18px; margin-bottom: 3px; }
+  .csub { font-size: 12px; color: var(--ink-soft); margin-bottom: 13px; }
+  .card-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--hairline);
+               padding-top: 12px; margin-top: 4px; font-size: 12px; }
+  .verdict-tag { font-weight: 600; }
+  .verdict-tag.nogo { color: var(--red); } .verdict-tag.go { color: var(--green); } .verdict-tag.conditional-go { color: var(--amber); } .verdict-tag.unknown { color: var(--ink-soft); }
+  .open-link { color: var(--terracotta); }
+  .demo-tag { font-size: 9px; letter-spacing: .08em; background: #ece4d6; color: var(--ink-soft); border-radius: 4px; padding: 2px 6px; text-transform: uppercase; }
+
+  .sev-row { display: flex; gap: 6px; margin-bottom: 13px; flex-wrap: wrap; }
+  .sev-chip { font-size: 11px; padding: 3px 9px; border-radius: 20px; font-variant-numeric: tabular-nums; }
+  .sev-chip.blocker { background: var(--red-bg); color: var(--blocker); font-weight: 600; }
+  .sev-chip.high { background: var(--amber-bg); color: var(--amber); }
+  .sev-chip.medium { background: #f0ece5; color: var(--ink-soft); }
+  .sev-chip.zero { opacity: .35; }
+
+  /* workflow 步驟條 */
+  .workflow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border: 1px solid var(--hairline);
+              border-radius: 12px; background: var(--paper-card); padding: 12px 16px; margin-bottom: 16px; font-size: 12.5px; }
+  .workflow .wf-label { letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); font-size: 10.5px; margin-right: 6px; }
+  .wf-step { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-soft); }
+  .wf-step .dot { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; border: 1px solid var(--hairline); }
+  .wf-step.done .dot { background: var(--green); color: #fff; border-color: var(--green); }
+  .wf-step.active .dot { background: var(--terracotta); color: #fff; border-color: var(--terracotta); }
+  .wf-step.active { color: var(--ink); font-weight: 600; }
+  .wf-arrow { color: var(--hairline); }
+
+  /* 分頁 tabs */
+  .subtabs { display: flex; gap: 4px; border-bottom: 1px solid var(--hairline); margin-bottom: 18px; }
+  .subtab { padding: 9px 16px; font-size: 13.5px; color: var(--ink-soft); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .subtab:hover { color: var(--ink); }
+  .subtab.active { color: var(--ink); font-weight: 600; border-bottom-color: var(--terracotta); }
+  .subtab .cnt { font-size: 11px; color: var(--ink-soft); margin-left: 5px; }
+
+  /* panel */
+  .panel { border: 1px solid var(--hairline); border-radius: 14px; background: var(--paper-card); overflow: hidden; margin-bottom: 18px; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--hairline); }
+  .panel-head .ptitle { font-family: var(--serif); font-size: 16px; }
+  .panel-head .pmeta { font-size: 11px; color: var(--ink-soft); font-family: var(--mono); }
+  .detail-cols { display: grid; grid-template-columns: 1.25fr 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 980px) { .detail-cols { grid-template-columns: 1fr; } }
+
+  .finding { padding: 14px 18px; border-bottom: 1px solid var(--hairline); }
+  .finding:last-child { border-bottom: none; }
+  .finding-top { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .sev-badge { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; padding: 3px 8px; border-radius: 5px; font-weight: 600; }
+  .sev-badge.blocker { background: var(--blocker); color: #fff; } .sev-badge.high { background: var(--amber); color: #fff; }
+  .sev-badge.medium { background: #ccc4b8; color: #fff; } .sev-badge.low, .sev-badge.info { background: #ddd6cb; color: var(--ink-soft); }
+  .finding .fid { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+  .finding .ftitle { font-size: 14.5px; font-weight: 600; flex: 1; }
+  .finding .frationale { font-size: 12.5px; color: var(--ink-soft); line-height: 1.55; margin-bottom: 8px; }
+  .finding .frec { font-size: 12.5px; line-height: 1.55; margin-bottom: 8px; } .finding .frec b { color: var(--terracotta); }
+  .evidence { background: var(--paper); border: 1px solid var(--hairline); border-left: 3px solid var(--terracotta-soft);
+              border-radius: 6px; padding: 8px 11px; font-size: 12px; color: var(--ink-soft); display: flex; gap: 8px; align-items: flex-start; }
+  .evidence .doc { font-family: var(--mono); font-size: 10.5px; color: var(--terracotta); white-space: nowrap; }
+  .evidence.missing { border-left-color: #bbb; }
+  .rubric-ref { font-family: var(--mono); font-size: 10.5px; color: var(--ink-soft); margin-left: auto; }
+
+  .trace { padding: 8px 18px 16px; }
+  .trace-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--hairline); }
+  .trace-item:last-child { border-bottom: none; }
+  .trace-icon { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; font-size: 10px; color: #fff; margin-top: 1px; }
+  .trace-icon.ok { background: var(--green); } .trace-icon.flag { background: var(--red); } .trace-icon.run { background: var(--terracotta); }
+  .trace-main { flex: 1; } .trace-main .tt { font-size: 13px; font-weight: 600; } .trace-main .td { font-size: 11.5px; color: var(--ink-soft); margin-top: 2px; line-height: 1.5; }
+  .trace-time { font-family: var(--mono); font-size: 10.5px; color: var(--ink-soft); }
+
+  .verdict-box { padding: 16px 18px; }
+  .verdict-headline { font-family: var(--serif); font-size: 22px; margin-bottom: 6px; }
+  .verdict-headline.nogo { color: var(--red); } .verdict-headline.go { color: var(--green); } .verdict-headline.conditional-go { color: var(--amber); }
+  .verdict-rule { font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; background: var(--paper); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; }
+  .gate-banner { display: flex; align-items: center; gap: 10px; background: var(--amber-bg); color: var(--amber); border-radius: 8px; padding: 10px 14px; font-size: 13px; font-weight: 600; margin-bottom: 14px; }
+  .signoff-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .who { font-size: 12px; color: var(--ink-soft); }
+  .btn-approve { background: var(--green); color: #fff; border: none; border-radius: 22px; padding: 10px 18px; font-size: 13px; cursor: pointer; }
+  .btn-ghost { background: transparent; border: 1px solid var(--hairline); border-radius: 22px; padding: 10px 16px; font-size: 13px; cursor: pointer; color: var(--ink-soft); }
+
+  /* 底稿 / 回饋 */
+  .doc-row { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--hairline); font-size: 13px; }
+  .doc-row:last-child { border-bottom: none; }
+  .doc-row .di { width: 30px; height: 30px; border-radius: 7px; background: var(--paper); display: grid; place-items: center; }
+  .doc-row .dmeta { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+  .empty-state { padding: 22px 18px; font-size: 13px; color: var(--ink-soft); line-height: 1.6; }
+  .feedback-box { padding: 14px 18px; }
+  .fb-input { width: 100%; border: 1px solid var(--hairline); border-radius: 10px; padding: 12px; font-family: var(--sans); font-size: 13px; resize: vertical; min-height: 70px; background: var(--paper); color: var(--ink-soft); }
+  .fb-route { display: flex; gap: 8px; margin-top: 10px; font-size: 11.5px; color: var(--ink-soft); align-items: center; flex-wrap: wrap; }
+  .route-chip { background: var(--paper); border: 1px solid var(--hairline); border-radius: 16px; padding: 4px 11px; }
+
+  /* skills 區 */
+  .skill-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .skill-table th { text-align: left; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); padding: 8px 18px; border-bottom: 1px solid var(--hairline); font-weight: 600; }
+  .skill-table td { padding: 11px 18px; border-bottom: 1px solid var(--hairline); }
+  .skill-table tr:last-child td { border-bottom: none; }
+  .skill-table .sname { font-weight: 600; }
+  .skill-table .spath { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+  .skill-table .schange { font-size: 11.5px; color: var(--ink-soft); }
+  .lens-state { font-size: 10px; padding: 2px 8px; border-radius: 12px; }
+  .lens-state.on { background: var(--green-bg); color: var(--green); }
+  .lens-state.off { background: #efeae2; color: var(--ink-soft); }
+
+  /* schedule 區 */
+  .sched-card { border: 1px solid var(--hairline); border-radius: 14px; background: var(--paper-card); padding: 16px 18px; display: flex; gap: 14px; align-items: flex-start; }
+  .sched-card .si { width: 38px; height: 38px; border-radius: 9px; background: var(--paper); display: grid; place-items: center; font-size: 17px; flex-shrink: 0; }
+  .sched-main { flex: 1; }
+  .sched-main .st { font-family: var(--serif); font-size: 16px; }
+  .sched-main .sd { font-size: 12.5px; color: var(--ink-soft); margin-top: 3px; line-height: 1.5; }
+  .sched-state { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; padding: 3px 9px; border-radius: 12px; }
+  .sched-state.implemented { background: var(--green-bg); color: var(--green); }
+  .sched-state.skeleton { background: #efeae2; color: var(--ink-soft); }
+
+  .hidden { display: none !important; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(40,30,25,.45); display: grid; place-items: center; z-index: 50; }
+  .modal { background: #fff; border-radius: 16px; padding: 28px 30px; width: 440px; max-width: 90vw; box-shadow: 0 30px 80px rgba(0,0,0,.3); text-align: center; }
+  .modal .check { width: 46px; height: 46px; border-radius: 50%; background: var(--green); color: #fff; display: grid; place-items: center; font-size: 22px; margin: 0 auto 14px; }
+  .modal h3 { font-family: var(--serif); font-size: 22px; margin-bottom: 6px; }
+  .modal .msub { font-size: 13px; color: var(--ink-soft); margin-bottom: 18px; }
+  .modal .approver, .modal .handed { display: flex; align-items: center; gap: 12px; background: var(--paper); border-radius: 10px; padding: 12px 14px; text-align: left; margin-bottom: 12px; }
+  .modal .approver .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--terracotta); }
+  .modal .handed { font-size: 12.5px; color: var(--ink-soft); } .modal .handed b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand">
+      <div class="logo">RC</div>
+      <div><div class="name">Review Committee</div><div class="sub">Agent Team</div></div>
+    </div>
+    <div class="nav-group">
+      <div class="gl">運作</div>
+      <div class="nav-item" data-view="projects"><span class="ic">▤</span> 專案 <span class="badge" id="nav-open"></span></div>
+      <div class="nav-item" data-view="schedule"><span class="ic">◷</span> 排程</div>
+    </div>
+    <div class="nav-group">
+      <div class="gl">治理</div>
+      <div class="nav-item" data-view="skills"><span class="ic">◈</span> Skills / 腦</div>
+    </div>
+    <div class="foot">
+      Agent 給推薦,<br>人做裁決。<br>
+      <span style="opacity:.7">merge PR = 正式裁決</span>
+    </div>
+  </aside>
+  <main id="view"></main>
+</div>
+
+<script src="data.js"></script>
+<script>
+const D = window.REVIEW_DATA;
+const PUBLIC = !!D.public_mode;   // 公開消毒版:無 findings 內文/verdict/底稿
+const VLABEL = { "no-go":"NO-GO","go":"GO","conditional-go":"帶條件 GO","unknown":"—" };
+const VCLASS = { "no-go":"nogo","go":"go","conditional-go":"conditional-go","unknown":"unknown" };
+function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function caseById(id){ return D.cases.find(c=>c.case_id===id); }
+function projectById(id){ return D.projects.find(p=>p.project_id===id); }
+function reviewsOf(pid){ return D.cases.filter(c=>c.project_id===pid); }
+
+let state = { view:"projects" };
+function setNav(v){ document.querySelectorAll(".nav-item").forEach(n=>n.classList.toggle("active", n.dataset.view===v)); }
+
+/* ════ 專案牌牆 ════ */
+function viewProjects(){
+  setNav("projects"); state.view="projects";
+  const cards = D.projects.map(p=>{
+    const vt = VCLASS[p.latest_verdict];
+    const openTxt = p.open_count ? `<span class="pill awaiting"><span class="sdot"></span>${p.open_count} 待人簽</span>`
+                                 : `<span class="pill decided"><span class="sdot"></span>全部已裁決</span>`;
+    return `<div class="card" onclick="viewProject('${p.project_id}')">
+      ${openTxt}
+      <div class="ctitle" style="margin-top:10px">${esc(p.project_name)}</div>
+      <div class="csub">${p.review_count} 次歷次審查 · 累計 ${p.total_blockers} blocker</div>
+      <div class="card-foot">
+        <span class="verdict-tag ${vt}">最新 ${VLABEL[p.latest_verdict]}</span>
+        <span class="open-link">Open →</span>
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("view").innerHTML = `
+    <div class="crumbs">運作 › <b>專案</b></div>
+    <div class="page-head">
+      <div><div class="page-title">專案</div>
+        <div class="page-meta"><span>每個專案 = 一個產品/系統,底下記錄歷次上線審查</span></div></div>
+      <button class="btn-run"><span>▶</span> 新審查</button>
+    </div>
+    <div class="context-bar">
+      <span>專案 <b>${D.summary.total_projects}</b></span>
+      <span>審查 case <b>${D.summary.total_cases}</b></span>
+      <span>待人簽 <b>${D.summary.awaiting}</b></span>
+      <span>已裁決 <b>${D.summary.decided}</b></span>
+    </div>
+    <div class="grid">${cards}</div>`;
+}
+
+/* ════ 單一專案 → 歷次審查 ════ */
+function viewProject(pid){
+  const p = projectById(pid); const revs = reviewsOf(pid);
+  const rows = revs.map(c=>{
+    const vt = VCLASS[c.verdict];
+    const st = c.status==="awaiting-signoff" ? `<span class="pill awaiting"><span class="sdot"></span>待人簽</span>`
+                                             : `<span class="pill decided"><span class="sdot"></span>已裁決</span>`;
+    const sev = c.severity;
+    const chips = ["blocker","high","medium"].map(k=>`<span class="sev-chip ${k} ${sev[k]?'':'zero'}">${sev[k]} ${k}</span>`).join("");
+    const demo = c.demo ? '<span class="demo-tag">示意</span>' : '';
+    return `<div class="card" onclick="viewCase('${c.case_id}')">
+      <div style="display:flex;justify-content:space-between;align-items:center">${st}${demo}</div>
+      <div class="ctitle" style="margin-top:10px;font-size:16px">${esc(c.case_id)}</div>
+      <div class="csub">security lens · ${(c.findings?c.findings.length:c.finding_count)||0} findings</div>
+      <div class="sev-row">${chips}</div>
+      <div class="card-foot"><span class="verdict-tag ${vt}">推薦 ${VLABEL[c.verdict]}</span><span class="open-link">Open →</span></div>
+    </div>`;
+  }).join("");
+  document.getElementById("view").innerHTML = `
+    <div class="crumbs"><a onclick="viewProjects()">專案</a> › <b>${esc(p.project_name)}</b></div>
+    <div class="page-head">
+      <div><div class="page-title">${esc(p.project_name)}</div>
+        <div class="page-meta"><span><b>${p.review_count}</b> 次歷次審查</span><span>·</span><span>待人簽 <b>${p.open_count}</b></span></div></div>
+      <button class="btn-run"><span>▶</span> 對此專案開新審查</button>
+    </div>
+    <div class="context-bar"><span style="color:var(--ink-soft)">歷次審查(同一產品的不同上線/變更/重審),由新到舊:</span></div>
+    <div class="grid">${rows}</div>`;
+}
+
+/* ════ 單一審查(三分頁:底稿 / Agent建議 / 回饋審核)════ */
+function viewCase(caseId, tab){
+  const c = caseById(caseId); if(!c) return;
+  tab = tab || "review";
+  const p = projectById(c.project_id);
+  const stages = D.workflow_stages.map((st,i)=>{
+    const cls = c.status==="decided" ? "done" : (i<3?"done":"active");
+    const glyph = (c.status==="decided"||i<3) ? "✓" : (i+1);
+    const arrow = i<D.workflow_stages.length-1 ? '<span class="wf-arrow">›</span>':'';
+    return `<span class="wf-step ${cls}"><span class="dot">${glyph}</span>${st}</span>${arrow}`;
+  }).join("");
+
+  const draftCnt = c.submission ? c.submission.length : null;
+  const reviewCnt = c.findings ? c.findings.length : (c.finding_count||0);
+  const tabs = [["draft","底稿",draftCnt],["review","Agent 建議",reviewCnt],["signoff","回饋與審核",null]]
+    .map(([k,label,cnt])=>`<div class="subtab ${k===tab?'active':''}" onclick="viewCase('${caseId}','${k}')">${label}${cnt!==null?`<span class="cnt">${cnt}</span>`:''}</div>`).join("");
+
+  document.getElementById("view").innerHTML = `
+    <div class="crumbs"><a onclick="viewProjects()">專案</a> › <a onclick="viewProject('${c.project_id}')">${esc(p.project_name)}</a> › <b>${esc(c.case_id)}</b></div>
+    <div class="page-head">
+      <div><div class="page-title" style="font-size:24px">${esc(c.case_id)}</div>
+        <div class="page-meta"><span>${esc(p.project_name)}</span><span>·</span><span>分支 <b>${esc(c.branch)}</b></span>${c.demo?'<span>·</span><span class="demo-tag">示意</span>':''}</div></div>
+      ${c.severity.blocker?`<div style="background:var(--red-bg);color:var(--red);border-radius:20px;padding:8px 16px;font-size:12.5px;font-weight:600">${c.severity.blocker} blocker 阻擋上線</div>`:''}
+    </div>
+    <div class="workflow"><span class="wf-label">Workflow</span>${stages}</div>
+    <div class="subtabs">${tabs}</div>
+    <div id="tabbody"></div>`;
+
+  if(tab==="draft") tabDraft(c);
+  else if(tab==="review") tabReview(c);
+  else tabSignoff(c);
+}
+
+function tabDraft(c){
+  if(PUBLIC || !c.submission){
+    document.getElementById("tabbody").innerHTML = `${publicNotice()}
+      <div class="empty-state">底稿(專案團隊提交的文件)屬機敏,僅內部版可見。</div>`;
+    return;
+  }
+  const docs = c.submission.length ? c.submission.map(f=>`
+    <div class="doc-row"><div class="di">▤</div><div><div style="font-weight:600">${esc(f.name)}</div>
+    <div style="font-size:11px;color:var(--ink-soft)">專案團隊提交的底稿</div></div>
+    <div class="dmeta">${(f.bytes/1024).toFixed(1)} KB</div></div>`).join("")
+    : `<div class="empty-state">此審查的底稿副本不在本機(實體 bytes 永遠留在 .runtime/,不進 git)。指標保留於 manifest。</div>`;
+  document.getElementById("tabbody").innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><span class="ptitle">底稿 — 專案團隊提交的文件</span><span class="pmeta">.runtime/workspace · 不進 git</span></div>
+      <div>${docs}</div>
+    </div>
+    <div class="empty-state" style="padding:0 2px">說明:原始檔 bytes 屬機密大檔,留在桌機本機 <code>.runtime/</code>;git 只留指標(檔名 / sha256 / 來源連結)。</div>`;
+}
+
+function publicNotice(){
+  return `<div class="empty-state" style="background:var(--amber-bg);border-radius:10px;color:var(--amber)">
+    🔒 這是公開版(GitHub Pages),只顯示彙總數字。findings 內文、evidence、verdict 全文、底稿屬機敏,僅在內部版可見。</div>`;
+}
+
+function tabReview(c){
+  if(PUBLIC || !c.findings){
+    const sev=c.severity;
+    document.getElementById("tabbody").innerHTML = `
+      ${publicNotice()}
+      <div class="panel"><div class="panel-head"><span class="ptitle">Findings 彙總</span><span class="pmeta">公開版</span></div>
+        <div class="verdict-box">
+          <div class="sev-row">${["blocker","high","medium","low","info"].map(k=>`<span class="sev-chip ${k} ${sev[k]?'':'zero'}">${sev[k]} ${k}</span>`).join("")}</div>
+          <div class="verdict-headline ${VCLASS[c.verdict]}">推薦:${VLABEL[c.verdict]}</div>
+          <div class="verdict-rule">共 ${c.finding_count||0} 條 findings。內文僅內部版可見。</div>
+        </div></div>`;
+    return;
+  }
+  const findings = c.findings.map(f=>{
+    const missing = (f.evidence||"").includes("缺證據");
+    return `<div class="finding">
+      <div class="finding-top"><span class="sev-badge ${f.severity}">${f.severity}</span><span class="ftitle">${esc(f.title)}</span><span class="fid">${esc(f.id)}</span></div>
+      <div class="frationale">${esc(f.rationale)}</div>
+      <div class="frec"><b>建議</b> · ${esc(f.recommendation)}</div>
+      <div class="evidence ${missing?'missing':''}"><span class="doc">${missing?'⚑ 缺證據':'▣ 來源'}</span><span>${esc(f.evidence)}</span><span class="rubric-ref">${esc(f.rubric_ref)}</span></div>
+    </div>`;
+  }).join("") || '<div class="empty-state">尚無 findings。</div>';
+
+  const blk = c.findings.filter(f=>f.severity==='blocker');
+  const trace = `
+    <div class="trace-item"><div class="trace-icon ok">✓</div><div class="trace-main"><div class="tt">Intake — 解析提交、完整性檢查</div><div class="td">讀入底稿,正規化、切出 security context slice</div></div><div class="trace-time">14:02:11</div></div>
+    <div class="trace-item"><div class="trace-icon ok">✓</div><div class="trace-main"><div class="tt">Security lens — 對照 rubric 逐條審查</div><div class="td">fetch review-security rubric(local),產出 ${c.findings.length} 條 findings</div></div><div class="trace-time">14:02:38</div></div>
+    ${blk.length?`<div class="trace-item"><div class="trace-icon flag">!</div><div class="trace-main"><div class="tt">${blk.length} 個 blocker 阻擋上線</div><div class="td">${blk.map(f=>esc(f.id)).join('、')}</div></div><div class="trace-time">14:02:41</div></div>`:''}
+    <div class="trace-item"><div class="trace-icon ok">✓</div><div class="trace-main"><div class="tt">Synthesize — 套 verdict-policy</div><div class="td">產出 verdict/recommendation.md</div></div><div class="trace-time">14:02:44</div></div>
+    <div class="trace-item"><div class="trace-icon ${c.status==='decided'?'ok':'run'}">${c.status==='decided'?'✓':'⏸'}</div><div class="trace-main"><div class="tt">${c.status==='decided'?'已由人簽核裁決':'交人裁決 — 待委員 merge PR'}</div><div class="td">Agent 給推薦,人做裁決</div></div><div class="trace-time">${c.status==='decided'?'done':'now'}</div></div>`;
+
+  const vc = VCLASS[c.verdict];
+  document.getElementById("tabbody").innerHTML = `<div class="detail-cols">
+    <div class="panel"><div class="panel-head"><span class="ptitle">Findings</span><span class="pmeta">finding.schema.json</span></div><div>${findings}</div></div>
+    <div>
+      <div class="panel"><div class="panel-head"><span class="ptitle">推薦裁決</span><span class="pmeta">verdict-policy.md</span></div>
+        <div class="verdict-box"><div class="verdict-headline ${vc}">推薦:${VLABEL[c.verdict]}</div>
+          <div class="verdict-rule">${c.severity.blocker?`任一 lens 有 <b>blocker</b> → 推薦 no-go。共 ${c.severity.blocker} 個 blocker。`:'無 blocker;依 high/medium 數量權衡。'}</div>
+          ${c.status==='decided'?'<div class="gate-banner" style="background:var(--green-bg);color:var(--green)">✓ 已由人簽核(此為歷史裁決)</div>':'<div class="gate-banner">⏸ 正式裁決 — 必須人簽(merge PR)才生效</div>'}
+        </div></div>
+      <div class="panel"><div class="panel-head"><span class="ptitle">Execution Trace</span><span class="pmeta">intake → lens → synth</span></div><div class="trace">${trace}</div></div>
+    </div></div>`;
+}
+
+function tabSignoff(c){
+  const decided = c.status==="decided";
+  document.getElementById("tabbody").innerHTML = `<div class="detail-cols">
+    <div class="panel"><div class="panel-head"><span class="ptitle">人的回饋(Slack 1:1)</span><span class="pmeta">中央 feedback store</span></div>
+      <div class="feedback-box">
+        <textarea class="fb-input" placeholder="委員對這次審查的回饋(例:sec-006 缺證據其實有附錄佐證 / 這條 rubric 判太嚴…)"></textarea>
+        <div class="fb-route">
+          <span>回饋走 <b style="color:var(--ink)">Slack 1:1 與主機討論</b>,落入 <b style="color:var(--ink)">中央 feedback store</b>:</span>
+        </div>
+        <div class="fb-route" style="margin-top:6px">
+          <span class="route-chip">① Slack 1:1 給回饋</span>
+          <span style="color:var(--hairline)">→</span>
+          <span class="route-chip">② 排程 agent 定期彙整</span>
+          <span style="color:var(--hairline)">→</span>
+          <span class="route-chip">③ 產 skill 修改提案(PR)</span>
+          <span style="color:var(--hairline)">→</span>
+          <span class="route-chip">④ 人覆核 merge</span>
+        </div>
+        <div style="margin-top:12px"><button class="btn-ghost">在 Slack 與主機討論(原型示意)</button></div>
+      </div></div>
+    <div class="panel"><div class="panel-head"><span class="ptitle">審核 / 簽核</span><span class="pmeta">CODEOWNERS</span></div>
+      <div class="verdict-box">
+        ${decided
+          ? `<div class="gate-banner" style="background:var(--green-bg);color:var(--green)">✓ 已裁決 — 由委員 merge PR 生效</div>
+             <div class="who" style="margin-bottom:10px">簽核軌跡:由 審查委員 於歷史時點 merge,推薦 ${VLABEL[c.verdict]} 正式生效。</div>`
+          : `<div class="gate-banner">⏸ 待人簽 — 推薦 ${VLABEL[c.verdict]} 尚未生效</div>
+             <div class="verdict-rule">go / no-go 正式裁決必走 PR + 指定 reviewer。否決專案屬重大決定,agent 不得自行定案。</div>
+             <div class="signoff-row"><button class="btn-approve" onclick="showSignoff('${c.case_id}')">✓ 簽核並 merge</button><button class="btn-ghost">退回請補</button><span class="who">交給 @審查委員</span></div>`}
+      </div></div>
+  </div>`;
+}
+
+/* ════ 排程 ════ */
+function viewSchedule(){
+  setNav("schedule"); state.view="schedule";
+  const cards = (D.schedule||[]).map(s=>`
+    <div class="sched-card">
+      <div class="si">${s.type==='digest'?'📊':s.type==='reminder'?'⏰':'🔍'}</div>
+      <div class="sched-main"><div class="st">${esc(s.name)}</div><div class="sd">${esc(s.desc)}</div></div>
+      <div class="sched-state ${s.status}">${s.status==='implemented'?'已實作':'骨架'}</div>
+    </div>`).join("");
+  document.getElementById("view").innerHTML = `
+    <div class="crumbs">運作 › <b>排程</b></div>
+    <div class="page-head"><div><div class="page-title">排程</div>
+      <div class="page-meta"><span>桌機本機排程(launchd/cron)把任務丟進同一條 queue,worker 依 type 分派</span></div></div></div>
+    <div class="context-bar"><span>所有排程任務與 Slack / 本機觸發 <b>共用同一條 queue</b>,差別只在 producer 與 type。</span></div>
+    <div style="display:flex;flex-direction:column;gap:12px;max-width:760px">${cards}</div>`;
+}
+
+/* ════ Skills / 腦 ════ */
+function viewSkills(){
+  setNav("skills"); state.view="skills";
+  const sk = D.skills;
+  const lensHealth = Object.entries(D.lens_health||{}).map(([l,h])=>`<span class="lens-state ${h.produced?'on':'off'}">${l} ${h.produced?'✓':'—'}</span>`).join(" ");
+  const tbl = (rows,label)=>`<div class="panel"><div class="panel-head"><span class="ptitle">${label}</span><span class="pmeta">${rows.length} 個 · 改它走 PR</span></div>
+    <table class="skill-table"><thead><tr><th>名稱</th><th>路徑</th><th>最近變更</th></tr></thead><tbody>
+    ${rows.map(r=>`<tr><td class="sname">${esc(r.name)}</td><td class="spath">${esc(r.path)}</td>
+      <td class="schange">${r.last_sha?`<code>${esc(r.last_sha)}</code> · ${esc(r.last_date)} · ${esc(r.last_subject)}`:'—'}</td></tr>`).join("")}
+    </tbody></table></div>`;
+  // 待人覆核的 skill 修改提案(來自 feedback-synthesis 排程)
+  const props = D.proposals || [];
+  const fbTotal = (D.feedback_summary && D.feedback_summary.total) || 0;
+  const propPanel = `<div class="panel" style="border-color:var(--terracotta-soft)">
+    <div class="panel-head"><span class="ptitle">待人覆核的 skill 修改提案</span>
+      <span class="pmeta">feedback-synthesis · 需人 merge</span></div>
+    ${props.length ? `<table class="skill-table"><thead><tr><th>指向 rubric</th><th>來源回饋</th><th>狀態</th></tr></thead><tbody>
+      ${props.map(p=>`<tr><td class="sname">${esc(p.target)}</td>
+        <td class="schange">${p.feedback_count} 條委員回饋彙整</td>
+        <td><span class="sched-state skeleton">待覆核</span></td></tr>`).join("")}
+      </tbody></table>
+      <div class="empty-state" style="border-top:1px solid var(--hairline)">這些提案由排程 agent 從 ${fbTotal} 條 Slack 1:1 回饋彙整而成。<b style="color:var(--ink)">採納與否由人覆核</b>:開 PR 改 rubric → 委員 merge 才生效(CODEOWNERS)。</div>`
+    : `<div class="empty-state">目前沒有待覆核的提案。委員透過 Slack 1:1 給的回饋累積後,排程的 feedback-synthesis agent 會彙整成提案放這。</div>`}
+  </div>`;
+
+  document.getElementById("view").innerHTML = `
+    <div class="crumbs">治理 › <b>Skills / 腦</b></div>
+    <div class="page-head"><div><div class="page-title">Skills / 腦</div>
+      <div class="page-meta"><span>受治理、改得慢、要留痕的「腦」:rubric / skill / agent。改它 = 開 PR,merge 後下次跑就吃到新版</span></div></div></div>
+    <div class="context-bar"><span>各 lens 健康度:</span> ${lensHealth} <span>·</span> <span>rubric 近 30 天變更 <b>${D.summary.rubric_changes_30d}</b></span> <span>·</span> <span>累積回饋 <b>${fbTotal}</b></span></div>
+    ${propPanel}
+    ${tbl(sk.rubrics,"Rubrics(各維度審查準則)")}
+    ${tbl(sk.skills,"Skills(thin shim)")}
+    ${tbl(sk.agents,"Agents(system prompt)")}`;
+}
+
+function showSignoff(caseId){
+  const c = caseById(caseId);
+  const m = document.createElement("div"); m.className="modal-backdrop";
+  m.onclick=(e)=>{ if(e.target===m) m.remove(); };
+  m.innerHTML = `<div class="modal"><div class="check">✓</div><h3>裁決已簽核</h3>
+    <div class="msub">${esc(caseId)} · 推薦 ${VLABEL[c.verdict]}</div>
+    <div class="approver"><div class="avatar"></div><div><div style="font-weight:600;font-size:13.5px">由 審查委員 簽核</div>
+      <div style="font-size:11.5px;color:var(--ink-soft)">merge PR = 正式裁決</div></div>
+      <div style="margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-soft)">now</div></div>
+    <div class="handed"><div><b>下一步 →</b> 其餘維度(privacy/legal/ops)補齊後合成最終官方裁決。本簽核僅針對 security 維度推薦。</div></div>
+    <div style="margin-top:14px;font-size:11px;color:var(--ink-soft)">(原型示意 — 實際 merge 在 GitHub PR 上發生)</div></div>`;
+  document.body.appendChild(m);
+}
+
+/* 導覽綁定 */
+document.querySelectorAll(".nav-item").forEach(n=>{
+  n.onclick = ()=>{ const v=n.dataset.view; if(v==="projects")viewProjects(); else if(v==="schedule")viewSchedule(); else if(v==="skills")viewSkills(); };
+});
+document.getElementById("nav-open").textContent = D.summary.awaiting || "";
+
+/* 入口:?view= / ?case= */
+const params = new URLSearchParams(location.search);
+if(params.get("case") && caseById(params.get("case"))) viewCase(params.get("case"), params.get("tab"));
+else if(params.get("project") && projectById(params.get("project"))) viewProject(params.get("project"));
+else if(params.get("view")==="schedule") viewSchedule();
+else if(params.get("view")==="skills") viewSkills();
+else viewProjects();
+</script>
+</body>
+</html>
