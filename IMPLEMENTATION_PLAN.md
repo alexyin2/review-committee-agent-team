@@ -39,9 +39,10 @@
 
 ## Step 3+ — 拓展(之後再展開,先記著)
 
-- [ ] **個人 Claude 同步**:`review-*` skills 走 thin-shim,委員用自己訂閱 Cowork 深挖 finding,讀同一份 rubric。
+- [x] **中央化 Feedback 迴圈**(取代原「個人 Claude 同步」):委員 Slack 1:1 → 中央 feedback store → 排程 `feedback-synthesis` 彙整成 skill 修改提案(PR)→ 人覆核 merge。**不走個人訂閱。**(`orchestrator/feedback_store.py`、`scheduled_tasks.run_feedback_synthesis`)
+- [x] **Dashboard / 靜態站**:`scripts/build_site.py`(+`generate_dashboard.py`)+ `site/` + `.github/workflows/{dashboard,pages}.yml`。Pages 只放消毒過的彙總(個人帳號 Pages 必公開)。
+- [x] **排程任務(部分)**:`daily-digest`、`feedback-synthesis` 已實作;`overdue-reminder`、`submission-patrol` 留骨架。
 - [ ] **Meeting Companion**:會議即時提點(互動式,跟 async 審查分開)。
-- [ ] **排程任務**:逾期審查提醒、rubric 改版重審、SharePoint/OneDrive 未觸發提交巡檢、每日 digest。(審查領域排程是次要的——大多 user-triggered。)
 - [ ] **OneDrive 上傳**:用 browser-use 繞 Graph 把檔案副本推上公司雲(合規需求,與聊天前門解耦)。
-- [ ] **Dashboard**:`.github/workflows/dashboard.yml` + `scripts/generate_dashboard.py`(審查中專案數、待人簽裁決、merged rubric 變更、各 lens 健康度)。
 - [ ] **Teams 第二 adapter**:若之後要,Teams 走 Power Automate,接同一個 queue。
+- [ ] **branch protection + 真實 CODEOWNERS**:把 `@org/review-committee` 換成真實帳號,並開 `main` 的 PR 必審,讓「人裁決」在 GitHub 上強制生效。

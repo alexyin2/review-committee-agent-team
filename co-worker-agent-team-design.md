@@ -159,6 +159,10 @@ flowchart TB
 
 ### 6.3 個人互動（走個人訂閱）
 
+> **⚠️ 已修訂(審查領域)**：此專案後來**拿掉「走個人訂閱」這條路**——全部執行集中在中央主機。
+> 委員的回饋改走 **Slack 1:1 → 中央 feedback store → 排程 feedback-synthesis 彙整成 skill 修改提案(PR)→ 人覆核 merge**。
+> 不再有「個人 overlay / token 走個人訂閱」。下面原文保留為設計沿革。詳見 `CLAUDE.md`「Feedback 迴圈(中央化)」。
+
 1. 開**自己的 Cowork / Claude Code**（訂閱登入），已配置同一套 team skills + 連狀態層。
 2. 多輪深入分析，讀**共享知識 + 你的偏好 overlay**；**這段 token 全走你的訂閱**。
 3. 你的修正 → **Feedback 路由器**：判團隊級→**提案升級（需確認）**；判個人→**只更新你的 overlay**。

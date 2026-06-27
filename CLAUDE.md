@@ -20,7 +20,7 @@
 ## 兩道閘(系統的靈魂)
 
 - **自主閘**:可逆×影響小 → 自動(讀提交、跑分析、寫 findings、更新 case README、貼草稿到頻道)。不可逆/影響大 → 停下問人(**go/no-go 裁決、否決專案 → 走 PR + CODEOWNERS**)。判準在 `principles/autonomy-gate.md`。
-- **Feedback 路由器**:一條回饋改「共享層」(需人確認/PR)還是「個人 overlay」。審查領域初期以共享層為主。
+- **Feedback 迴圈(中央化)**:委員透過 **Slack 1:1** 跟主機給回饋 → 落 **中央 feedback store**(`.runtime/feedback/`,不進 git)→ 排程的 **feedback-synthesis** agent 定期彙整成 **rubric/skill 修改提案(PR)** → **由人覆核 merge** 才生效(走 skills/rubrics 的 CODEOWNERS)。**全部執行集中在中央主機,不走個人訂閱。**
 
 ## 兩段式流程
 
