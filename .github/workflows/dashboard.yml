@@ -1,0 +1,52 @@
+# L1 私有 dashboard 自動更新(design §8)。
+#
+# GitHub Actions = 代管 compute,不是要維護的 server。每次有審查動靜(merge 進 main)
+# 就重算 DASHBOARD.md 並 commit 回 repo。**不呼叫 model**——Actions 只做不需 model 的事。
+#
+# 隱私:這是 L1(DASHBOARD.md commit 回 private repo,完全私有)。
+# 不要改成推 GitHub Pages——Pages 即使 repo private 也公開在網路上(design §8 隱私點)。
+name: dashboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "reviews/**"
+      - "rubrics/**"
+      - "scripts/generate_dashboard.py"
+  workflow_dispatch: {}   # 也可手動觸發
+
+permissions:
+  contents: write          # 只需要寫回 DASHBOARD.md;唯讀 model 用不到
+
+concurrency:
+  group: dashboard
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # collect_state 要看 review/* 分支與 rubric git log
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 產生 DASHBOARD.md
+        run: |
+          python scripts/generate_dashboard.py --generated-at "$(date -u '+%Y-%m-%d %H:%M:%SZ')"
+
+      - name: commit 回 repo(若有變動)
+        run: |
+          if [[ -n "$(git status --porcelain DASHBOARD.md)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add DASHBOARD.md
+            git commit -m "chore(dashboard): 自動更新狀態板"
+            git push
+          else
+            echo "DASHBOARD.md 無變動,略過 commit。"
+          fi
