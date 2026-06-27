@@ -36,6 +36,11 @@ jobs:
         with:
           fetch-depth: 0     # build_site 要看 review/* 分支與 git log
 
+      - name: 取得所有 review/* 分支(checkout 預設只抓 main)
+        run: |
+          git fetch origin '+refs/heads/review/*:refs/remotes/origin/review/*' || true
+          echo "remote review refs:"; git for-each-ref --format='  %(refname:short)' 'refs/remotes/origin/review/' || true
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
