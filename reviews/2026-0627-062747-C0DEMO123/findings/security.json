@@ -1,0 +1,68 @@
+{
+  "lens": "security",
+  "findings": [
+    {
+      "id": "sec-001",
+      "severity": "blocker",
+      "title": "Admin endpoints 完全沒有身分驗證",
+      "rationale": "對應 rubric sec-authn(身分驗證機制是什麼?)。rubric 嚴重度判準明列「無任何 authn」為 blocker。提交文件明說 admin endpoints 尚無任何驗證,任何人皆可呼叫管理端點。",
+      "recommendation": "上線前對所有 admin endpoints 強制驗證(至少 session/token-based authn),並對管理操作加上 MFA。在 launch doc 補上驗證機制說明。",
+      "evidence": "launch-doc.md「Auth」段:\"No authentication on the admin endpoints yet.\"",
+      "rubric_ref": "sec-authn"
+    },
+    {
+      "id": "sec-002",
+      "severity": "blocker",
+      "title": "正式環境資料庫密碼硬編碼於原始碼",
+      "rationale": "對應 rubric sec-secret(secrets 怎麼管?有無硬編碼?)。rubric 嚴重度判準明列「硬編碼正式環境 secret」為 blocker。提交文件明說正式 DB 密碼以明碼寫死在 config.py。",
+      "recommendation": "立即將密碼移出原始碼,改用 secret manager / 環境變數注入;因已外洩於文件與程式碼,須輪換(rotate)該密碼並稽核存取紀錄。",
+      "evidence": "launch-doc.md「Auth」段:\"The database password is hardcoded in config.py as DB_PASS=\\\"prod-secret-456\\\".\"",
+      "rubric_ref": "sec-secret"
+    },
+    {
+      "id": "sec-003",
+      "severity": "blocker",
+      "title": "明文儲存使用者密碼且資料靜態未加密",
+      "rationale": "對應 rubric sec-data(敏感資料在傳輸/靜態下是否加密?)。rubric 嚴重度判準明列「無加密的敏感資料外洩路徑」為 blocker。提交文件明說在 MySQL 以明文存使用者 email 與密碼,且無靜態加密——任何 DB 外洩即直接洩漏全部憑證。",
+      "recommendation": "密碼絕不可明文儲存,須用慢雜湊(如 bcrypt/argon2)加鹽雜湊;對含 PII 的資料庫啟用靜態加密(encryption at rest)。",
+      "evidence": "launch-doc.md「Data」段:\"We store user emails and plaintext passwords in MySQL. No encryption at rest.\"",
+      "rubric_ref": "sec-data"
+    },
+    {
+      "id": "sec-004",
+      "severity": "high",
+      "title": "無相依套件漏洞掃描",
+      "rationale": "對應 rubric sec-deps(相依套件有無已知漏洞掃描?)。rubric 嚴重度判準明列「無漏洞掃描」為 high。提交文件明說無任何相依套件漏洞掃描。",
+      "recommendation": "在 CI 導入相依漏洞掃描(如 Dependabot / pip-audit / Trivy),並設定上線前必過的門檻。",
+      "evidence": "launch-doc.md「Ops」段:\"No dependency vulnerability scanning.\"",
+      "rubric_ref": "sec-deps"
+    },
+    {
+      "id": "sec-005",
+      "severity": "medium",
+      "title": "無安全事件日誌與告警",
+      "rationale": "對應 rubric sec-logging(有無安全事件日誌與告警?)。rubric 將日誌不足歸為 medium/low。提交文件明說完全無 logging 或 alerting,事件發生時無法偵測或追溯。",
+      "recommendation": "至少記錄驗證/授權失敗、管理操作與資料存取的安全事件日誌,並接上告警;保留足以鑑識的稽核軌跡。",
+      "evidence": "launch-doc.md「Ops」段:\"No logging or alerting.\"",
+      "rubric_ref": "sec-logging"
+    },
+    {
+      "id": "sec-006",
+      "severity": "medium",
+      "title": "授權模型未說明(缺證據)",
+      "rationale": "對應 rubric sec-authz(授權模型?最小權限?)。提交文件未描述任何授權/最小權限設計——缺證據,無法判定是否有授權控制。考量 admin endpoints 已無 authn,授權層極可能也缺失。",
+      "recommendation": "補充授權模型文件:角色/權限劃分、最小權限原則,以及 admin 與一般使用者的權限邊界。",
+      "evidence": "缺證據:launch-doc.md 全文未提及授權模型或權限控制。",
+      "rubric_ref": "sec-authz"
+    },
+    {
+      "id": "sec-007",
+      "severity": "medium",
+      "title": "上線前無滲透測試/威脅建模(缺證據)",
+      "rationale": "對應 rubric sec-pentest(上線前有無滲透測試/威脅建模?)。提交文件未提及任何滲透測試或威脅建模——缺證據,無法確認上線前安全驗證已執行。",
+      "recommendation": "上線前安排威脅建模與滲透測試,並將重大發現列為上線阻擋條件。",
+      "evidence": "缺證據:launch-doc.md 全文未提及滲透測試或威脅建模。",
+      "rubric_ref": "sec-pentest"
+    }
+  ]
+}
