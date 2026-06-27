@@ -40,9 +40,27 @@ def _git(args: list[str]) -> subprocess.CompletedProcess:
                           capture_output=True, text=True)
 
 
-def _review_branches() -> list[str]:
-    out = _git(["for-each-ref", "--format=%(refname:short)", "refs/heads/review/"]).stdout
-    return [b.strip() for b in out.splitlines() if b.strip()]
+def _review_branches() -> list[dict]:
+    """待人簽的 review 分支。回傳 [{ref, case_id}]。
+
+    同時掃本地 head 與遠端 tracking ref——CI / fresh clone 裡 review/* 是
+    refs/remotes/origin/review/*(非本地 head),只掃 refs/heads 會漏掉。
+    以 case_id 去重(本地與遠端同名只算一次,優先本地 ref)。
+    """
+    seen: dict[str, str] = {}  # case_id -> ref(供 git show)
+    # 本地 heads 優先
+    local = _git(["for-each-ref", "--format=%(refname:short)", "refs/heads/review/"]).stdout
+    for b in (l.strip() for l in local.splitlines()):
+        if b:
+            seen.setdefault(b[len("review/"):], b)
+    # 再補遠端 tracking refs
+    remote = _git(["for-each-ref", "--format=%(refname:short)", "refs/remotes/*/review/"]).stdout
+    for b in (l.strip() for l in remote.splitlines()):
+        if not b:
+            continue
+        case_id = b.split("/review/", 1)[1] if "/review/" in b else b
+        seen.setdefault(case_id, b)  # 用完整 ref(如 origin/review/xxx)供 git show
+    return [{"ref": ref, "case_id": cid} for cid, ref in seen.items()]
 
 
 def _decided_cases() -> list[str]:
@@ -245,9 +263,8 @@ def _collect_case(case_id: str, branch: str | None, status: str, lenses: list[st
 def collect() -> dict:
     lenses = _lenses()
     cases = []
-    for branch in _review_branches():
-        case_id = branch[len("review/"):]
-        cases.append(_collect_case(case_id, branch, "awaiting-signoff", lenses))
+    for rb in _review_branches():
+        cases.append(_collect_case(rb["case_id"], rb["ref"], "awaiting-signoff", lenses))
     for case_id in _decided_cases():
         cases.append(_collect_case(case_id, None, "decided", lenses))
 
