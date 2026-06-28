@@ -1,0 +1,1 @@
+{"lens": "security", "findings": [{"id": "sec-001", "severity": "high", "title": "A", "rationale": "r", "recommendation": "c"}, {"id": "sec-002", "severity": "low", "title": "B", "rationale": "r", "recommendation": "c"}]}
