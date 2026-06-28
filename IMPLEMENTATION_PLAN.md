@@ -23,19 +23,25 @@
 
 **驗收**:在 Slack 頻道 @claude 附一個 PDF → 桌機 `.runtime/` 出現該檔 + queue 多一筆 → 頻道看到 ack。
 
-## Step 2 — 審查 pipeline + GitHub
+## Step 2 — 對話式審查同事(brief 驅動,非狀態機)+ GitHub
 
-**目標**:queue 裡的 case 被自動審完,產出走 PR,結果回 Slack。
+**目標**:case 綁 thread、跨多則訊息累積;Claude 讀 brief 判斷路徑,Python 兌現承諾;結晶成 PR 回對話。**不是**「一則 mention 跑一次就開 PR」的交易管線(見 memory conversation-not-vending-machine / brief-driven-not-state-machine)。
 
-- [ ] `contracts/finding.schema.json` 定案 + 一個 lens 先跑通驗證。
-- [ ] `rubrics/` 先做 3–4 個真正會 gate 上線的維度(security/privacy/legal/ops)。
-- [ ] `skills/run-review/SKILL.md`:thin shim,定義 intake→fan-out→synthesize 的步驟與產出位置。
-- [ ] `agents/` 各 system prompt(intake / review-lens 共用骨架 / synthesizer)。
-- [ ] `orchestrator/worker.py`:輪詢 queue → 佈置工作區 → 叫起 `claude` 跑 run-review → **產出完整性檢查** → commit → `gh pr create` → 回 Slack 貼 PR + @委員。
-- [ ] `.github/CODEOWNERS`:`reviews/**/verdict/` 與「腦」變更強制指定人 merge。
-- [ ] `contracts/verdict-policy.md`:findings → go/no-go/帶條件,哪些必須人簽。
+- [x] `contracts/finding.schema.json` + security lens 跑通驗證。
+- [x] `rubrics/` security/privacy/legal/ops(本切片只 gate security)。
+- [x] `skills/run-review/SKILL.md`:thin shim(intake→fan-out→synthesize 與產出位置)。
+- [x] `agents/`:intake / review-lens / synthesizer + **`case-agent.md`(對話大腦 brief)**。
+- [x] `orchestrator/case_store.py`:綁 thread 的笨持久層(state.json + inbox.jsonl + thread index)。
+- [x] `orchestrator/inbox.py`:輪詢 + 可插拔 `InboxAdapter`(Slack 先;Teams/Graph 佔位)。
+- [x] `orchestrator/slack_client.post_thread`:reporter seam(無 token 降級 print)。
+- [x] `orchestrator/worker.py`:撈 `case-activity` → drain → 叫大腦拿行動計畫 → **Python 逐項執行+完整性驗收** → commit → (有 remote)`gh pr create` → 回對話 + @委員。
+- [x] `orchestrator/git_ops.py`:改版重審冪等(清舊產出、無變更不炸、commit 帶 version)。
+- [x] `.github/CODEOWNERS`:`reviews/**/verdict/` 與「腦」變更強制指定人 merge。
+- [x] `contracts/verdict-policy.md`:findings → go/no-go/帶條件,哪些必須人簽。
+- [ ] **(你)** 設 Slack token 後接 `SlackInboxAdapter.fetch_new_mentions` 真 API(`conversations.history`)。
+- [ ] 擴從 security 一顆 lens → 四維 subagent fan-out。
 
-**驗收**:丟一個提交 → 自動產生一個 PR(含各維度 findings + 推薦)→ Slack 收到連結 + @到人 → 人 merge = 正式裁決。
+**驗收**:在 thread 開話題(可分多則補件)→ agent 對話追問→ 料齊自動審→ 貼推薦草稿→ 委員說 OK → 結晶成 PR(含 findings + 推薦)→ 對話收到連結 + @到人 → 人 merge = 正式裁決。離線驗收見 `smoke_test`(fake adapter + 假行動計畫,不需 token)。
 
 ## Step 3+ — 拓展(之後再展開,先記著)
 
@@ -43,6 +49,6 @@
 - [x] **Dashboard / 靜態站**:`scripts/build_site.py`(+`generate_dashboard.py`)+ `site/` + `.github/workflows/{dashboard,pages}.yml`。Pages 只放消毒過的彙總(個人帳號 Pages 必公開)。
 - [x] **排程任務(部分)**:`daily-digest`、`feedback-synthesis` 已實作;`overdue-reminder`、`submission-patrol` 留骨架。
 - [ ] **Meeting Companion**:會議即時提點(互動式,跟 async 審查分開)。
-- [ ] **OneDrive 上傳**:用 browser-use 繞 Graph 把檔案副本推上公司雲(合規需求,與聊天前門解耦)。
-- [ ] **Teams 第二 adapter**:若之後要,Teams 走 Power Automate,接同一個 queue。
+- [ ] **OneDrive/SharePoint 文件**:訊息帶連結,審查時拓臨時副本(`worker._fetch_docs` 已有本機/`file://` 路徑;http(s) 待接 Graph)。先連結、保留 attachment 退路,穩了再考慮強制。
+- [ ] **Teams 第二 adapter**:`inbox.GraphInboxAdapter`(已佔位)走 Microsoft Graph delta query 輪詢,接同一條 case_store/worker。需 Azure app 註冊 + admin consent(`ChannelMessage.Read.All`)。與 OneDrive 共用同一套 Graph 認證。
 - [ ] **branch protection + 真實 CODEOWNERS**:把 `@org/review-committee` 換成真實帳號,並開 `main` 的 PR 必審,讓「人裁決」在 GitHub 上強制生效。
