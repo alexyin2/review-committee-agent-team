@@ -23,6 +23,8 @@ JOBS = {
     "feedback-synthesis": "feedback-synthesis",
     "overdue-reminder": "reminder",
     "submission-patrol": "patrol",
+    # 前門 inbox 輪詢(pull 不被 push):每約 10 分鐘撈各通道新 @mention。
+    "poll-inbox": "poll-inbox",
 }
 
 

@@ -101,6 +101,21 @@ def run_feedback_synthesis(case: dict) -> str:
     return head + "\n  提案:" + detail
 
 
+def run_poll_inbox(case: dict) -> str:
+    """前門輪詢:撈各通道新 @mention → 收進 case_store → 丟 case-activity 信號。
+
+    pull 不被 push(見 memory poll-not-push-channel-adapters)。本切片用 Slack adapter;
+    無 token 時 adapter 回空(離線可測)。Teams(Graph)adapter 之後接上,同一條路。
+    這層純機械,不叫 model;判斷由 worker 對 case-activity 信號叫 Claude 做。
+    """
+    from . import inbox
+
+    adapter = inbox.SlackInboxAdapter()
+    summary = inbox.poll_inbox(adapter)
+    return (f"📥 poll-inbox（{summary['adapter']}）:新訊息 {summary['mentions']} 則，"
+            f"觸及 case {summary['cases_touched']} 個。")
+
+
 def run_reminder(case: dict) -> str:
     """逾期審查提醒(骨架)。未來:掃 awaiting-signoff 超過 N 天 → @委員。"""
     return "⏰ reminder 任務尚未實作(骨架)。"
@@ -115,6 +130,7 @@ def run_patrol(case: dict) -> str:
 HANDLERS = {
     "digest": run_digest,
     "feedback-synthesis": run_feedback_synthesis,
+    "poll-inbox": run_poll_inbox,
     "reminder": run_reminder,
     "patrol": run_patrol,
 }

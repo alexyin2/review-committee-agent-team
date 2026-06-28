@@ -39,7 +39,12 @@ def enqueue(case_id: str, payload: dict) -> Path:
 
 
 def claim_next() -> dict | None:
-    """Step 2:把最舊的 incoming move 到 processing 並回傳其 payload;無則 None。"""
+    """Step 2:把最舊的 incoming move 到 processing 並回傳其 payload;無則 None。
+
+    回傳的 payload 帶 `_queue_file`(實際檔名),供 mark_done 準確 move——
+    因為信號檔名不一定等於 case_id(對話式 case 用 `case-activity-<id>.json`
+    collapse 同 case 多訊息,見 inbox.poll_inbox)。
+    """
     _ensure_dirs()
     candidates = sorted(INCOMING.glob("*.json"), key=lambda p: p.stat().st_mtime)
     if not candidates:
@@ -47,12 +52,19 @@ def claim_next() -> dict | None:
     src = candidates[0]
     dst = PROCESSING / src.name
     src.rename(dst)
-    return json.loads(dst.read_text(encoding="utf-8"))
+    payload = json.loads(dst.read_text(encoding="utf-8"))
+    payload["_queue_file"] = dst.name
+    return payload
 
 
-def mark_done(case_id: str) -> None:
-    """Step 2:把 processing/<case_id>.json move 到 done。"""
+def mark_done(payload: dict) -> None:
+    """Step 2:把 processing/ 下的這筆信號檔 move 到 done。
+
+    吃 claim_next 回傳的 payload(取 `_queue_file`);相容舊用法:若沒帶
+    `_queue_file`,退回用 `<case_id>.json`。
+    """
     _ensure_dirs()
-    src = PROCESSING / f"{case_id}.json"
+    name = payload.get("_queue_file") or f"{payload['case_id']}.json"
+    src = PROCESSING / name
     if src.exists():
         shutil.move(str(src), str(DONE / src.name))

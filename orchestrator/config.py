@@ -30,9 +30,11 @@ class Config:
         slack_cfg = cfg.get("slack", {})
         review_cfg = cfg.get("review", {})
 
-        # .runtime 目錄(queue / 下載副本 / secrets / log)
+        # .runtime 目錄(queue / cases / 下載副本 / secrets / log)
         self.runtime_dir = REPO_ROOT / runtime_cfg.get("dir", ".runtime")
         self.poll_interval = int(runtime_cfg.get("poll_interval_seconds", 10))
+        # 前門 inbox 輪詢間隔(pull 不被 push;見 memory poll-not-push-channel-adapters)
+        self.inbox_poll_interval = int(runtime_cfg.get("inbox_poll_interval_seconds", 600))
 
         secrets = _load_toml(self.runtime_dir / "secrets.toml")
         slack_secrets = secrets.get("slack", {})
@@ -64,6 +66,14 @@ class Config:
     @property
     def queue_dir(self) -> Path:
         return self.runtime_dir / "queue"
+
+    @property
+    def cases_dir(self) -> Path:
+        """綁 thread 的 case 持久層根目錄(對話/草稿,永不進 git)。"""
+        return self.runtime_dir / "cases"
+
+    def case_state_dir(self, case_id: str) -> Path:
+        return self.cases_dir / case_id
 
     def workspace_dir(self, case_id: str) -> Path:
         return self.runtime_dir / "workspace" / case_id

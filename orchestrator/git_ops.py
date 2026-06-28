@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import REPO_ROOT, config
@@ -80,6 +79,9 @@ def stage_review_outputs(case: dict, workspace: Path) -> Path:
     """
     case_id = case["case_id"]
     review_dir = REPO_ROOT / "reviews" / case_id
+    # 改版重審:先清舊產出再複製,避免 stale(v1 五條、v2 三條,舊檔不清會殘留)。
+    shutil.rmtree(review_dir / "findings", ignore_errors=True)
+    shutil.rmtree(review_dir / "verdict", ignore_errors=True)
     (review_dir / "findings").mkdir(parents=True, exist_ok=True)
     (review_dir / "verdict").mkdir(parents=True, exist_ok=True)
 
@@ -97,23 +99,31 @@ def stage_review_outputs(case: dict, workspace: Path) -> Path:
 
 
 def _render_readme(case: dict, copied: list[str]) -> str:
-    """產 case 狀態板 README(人看的入口)。"""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    """產 case 狀態板 README(人看的入口)。
+
+    刻意**不放「現在時間」**:README 內容必須是產出的純函數,否則同樣的 findings/verdict
+    每次重跑都因時間戳不同而產生空 commit(破壞改版冪等的 no-op)。要時間就用 case 自帶的
+    穩定 created_at(沒有就略過)。
+    """
     files = "、".join(f.get("name", "?") for f in case.get("files", [])) or "(無)"
     src = case.get("source")
     if isinstance(src, dict):
         source_str = src.get("slack_permalink") or src.get("dir") or src.get("type", "?")
     else:
         source_str = str(src)
+    version = case.get("version", 0)
+    status_note = case.get("status_note", "")
+    note_line = f"\n- **agent 理解**:{status_note}" if status_note else ""
+    created = case.get("created_at", "")
+    created_line = f"\n- **建立時間**:{created}" if created else ""
     return f"""# Case {case['case_id']}
 
 > 本案狀態板。findings/verdict 為 agent 推薦;**真正裁決 = 人 merge 此 PR**(CODEOWNERS)。
 
-- **狀態**:verdict-draft(待人簽)
+- **狀態**:待人簽(版本 v{version};agent 給推薦,人 merge 才算裁決)
 - **來源**:{source_str}
-- **提交者**:{case.get('submitter', '?')}
-- **建立時間**:{ts}
-- **提交檔**:{files}
+- **提交者**:{case.get('submitter', '?')}{created_line}
+- **提交檔**:{files}{note_line}
 
 ## 產出
 {chr(10).join(f'- `{c}`' for c in copied) or '- (無)'}
@@ -145,10 +155,7 @@ def open_review_pr(case: dict, dry_run: bool = False) -> str:
     # 0) 安全護欄:不可有與本案無關的已 staged 變更(會被掃進審查 commit)
     _assert_no_unrelated_staged(rel_prefix)
 
-    # 1) 橋接:runtime 產物 → tracked reviews/
-    stage_review_outputs(case, workspace)
-
-    # 2) 無遠端 → 強制 dry-run
+    # 1) 無遠端 → 強制 dry-run
     if not dry_run and not _has_remote():
         print("[git_ops] 偵測不到 git remote,自動轉 dry-run(只本機 commit,跳過 push/PR)。")
         dry_run = True
@@ -156,22 +163,32 @@ def open_review_pr(case: dict, dry_run: bool = False) -> str:
     original_branch = _current_branch()
     branch = f"review/{case_id}"
 
-    # 3) 開分支 + add + commit
+    # 2) ★先切分支、再 stage(順序很重要):
+    #    stage_review_outputs 從 gitignored workspace 讀、寫進 reviews/<case>/,與所在分支無關。
+    #    若先在原分支 stage(寫出 untracked 檔)再 switch 到已含這些 tracked 檔的審查分支,
+    #    git 會因「untracked 檔會被覆蓋」而拒絕 switch(改版重審必踩)。故先 switch。
     if _git(["rev-parse", "--verify", branch], check=False).returncode == 0:
         _git(["switch", branch])
     else:
         _git(["switch", "-c", branch])
 
+    version = case.get("version", 0)
     try:
+        # 3) 橋接:runtime 產物 → tracked reviews/(改版會清舊產出避免 stale)
+        stage_review_outputs(case, workspace)
         _git(["add", rel_prefix])
-        # 沒東西可 commit?(理論上不該,保險起見)
+        # 改版重審時「內容與上版一字不差」是合法的(非錯誤)——不 commit、不炸,直接回報。
         if _git(["diff", "--cached", "--quiet"], check=False).returncode == 0:
-            raise RuntimeError(f"沒有可提交的審查產出於 {rel_prefix}")
-        _git(["commit", "-m", f"review({case_id}): security findings + recommendation"])
+            return (
+                f"[no-op] 分支 {branch} 的審查產出與上一版相同,無新 commit"
+                f"(v{version});PR 維持原樣。"
+            )
+        _git(["commit", "-m",
+              f"review({case_id}) v{version}: security findings + recommendation"])
 
         if dry_run:
             return (
-                f"[dry-run] 已在分支 {branch} 本機 commit {rel_prefix};"
+                f"[dry-run] 已在分支 {branch} 本機 commit {rel_prefix}(v{version});"
                 f"跳過 push + PR。檢視:git show {branch}"
             )
 

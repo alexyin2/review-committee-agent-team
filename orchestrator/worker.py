@@ -25,7 +25,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import git_ops, queue
+from . import case_store, git_ops, queue, slack_client
 from .config import REPO_ROOT, config
 
 # 本切片只跑 security;擴展到四維時把其餘加回並改用 Task fan-out。
@@ -42,12 +42,12 @@ def _case_type(case: dict) -> str:
 
 
 def _source_type(case: dict) -> str:
-    """slack | local。
+    """slack | local | inbox。
 
-    相容三種形狀:
-      - 舊 Slack:source = {"slack_permalink": ...}            → slack
-      - 新標記式:source = {"type": "local"|"slack", ...}       → 該 type
-      - 純字串  :source = "local"                               → local
+    相容多種形狀:
+      - 舊 Slack:source = {"slack_permalink": ...}                  → slack
+      - 新標記式:source = {"type": "local"|"slack"|"inbox", ...}     → 該 type
+      - 純字串  :source = "local"                                     → local
     """
     source = case.get("source")
     if isinstance(source, dict):
@@ -74,27 +74,56 @@ def _local_source_dir(case: dict) -> Path | None:
 WORKSPACE_SUBDIRS = ("files", "intake", "lenses/security", "findings", "verdict")
 
 
-def setup_workspace(case: dict) -> Path:
+def _fetch_docs(case: dict, files_dir: Path) -> None:
+    """inbox 來源:把 case 的 doc_links 拓一份臨時副本進 files_dir(用完即拋,不進 git)。
+
+    本切片支援的連結:
+      - 本機路徑 / file:// → 直接複製(供離線測試與 local fast path)。
+      - http(s) OneDrive/SharePoint → 待接 Graph(需 Azure 認證);本切片記 log 跳過。
+    attachment 退路:listener 路徑已把附檔放在 files_dir,這裡不覆蓋。
+    """
+    for link in case.get("doc_links", []) or []:
+        path_str = link[7:] if link.startswith("file://") else link
+        p = Path(path_str).expanduser()
+        if p.is_file():
+            shutil.copy2(p, files_dir / p.name)
+        elif p.is_dir():
+            for f in sorted(p.iterdir()):
+                if f.is_file():
+                    shutil.copy2(f, files_dir / f.name)
+        else:
+            print(f"[worker] doc_link 待 Graph 接線、本切片跳過:{link}")
+
+
+def setup_workspace(case: dict, fresh: bool = False) -> Path:
     """建立 .runtime/workspace/<case_id>/ 結構並備好提交檔。回傳 workspace 路徑。
 
     - 一律 idempotent(可重跑同一 case)。
+    - fresh=True(改版重審):先清 findings/verdict/intake,避免讀到上一版殘檔。
     - local 來源:從 source.dir 複製檔到 files/(copy 而非 symlink,來源被改/移仍穩)。
+    - inbox 來源:從 doc_links 拓臨時副本(見 _fetch_docs);attachment 為退路。
     - slack 來源:檔已由 listener 放在 files/,僅確認存在。
-    - 無任何輸入檔 → 早點丟 ValueError,別空轉叫起 claude。
+    - 無任何輸入檔 → 丟 ValueError(呼叫端決定怎麼回報,別空轉叫起 claude)。
     """
     case_id = case["case_id"]
     ws = config.workspace_dir(case_id)
+    if fresh:
+        for sub in ("findings", "verdict", "intake"):
+            shutil.rmtree(ws / sub, ignore_errors=True)
     for sub in WORKSPACE_SUBDIRS:
         (ws / sub).mkdir(parents=True, exist_ok=True)
 
     files_dir = ws / "files"
-    if _source_type(case) == "local":
+    src_type = _source_type(case)
+    if src_type == "local":
         src = _local_source_dir(case)
         if src is None or not src.is_dir():
             raise ValueError(f"local case 的 source.dir 無效:{src}")
         for f in sorted(src.iterdir()):
             if f.is_file():
                 shutil.copy2(f, files_dir / f.name)
+    elif src_type == "inbox":
+        _fetch_docs(case, files_dir)
 
     present = [p for p in files_dir.iterdir() if p.is_file()]
     if not present:
@@ -236,38 +265,210 @@ def invoke_review(workspace: Path, case_id: str) -> subprocess.CompletedProcess:
 
 
 # --------------------------------------------------------------------------
-# 回報(依來源分流;本切片 local→stdout,slack 留 TODO seam)
+# 回報(reporter seam:有 thread 就貼回對話,否則 print;無 token 時 post_thread 自降級)
 # --------------------------------------------------------------------------
+def _reply(case: dict, text: str) -> None:
+    """把一段話送回 case 所在的 thread。
+
+    reporter seam:綁了 thread 的 case → slack_client.post_thread(無 token 時自動印出);
+    沒有 thread 的(local / schedule)→ 直接 print。取代舊的 [slack-TODO] 樁。
+    """
+    channel = case.get("channel", "")
+    thread_id = case.get("thread_id") or case.get("thread_ts") or ""
+    if channel and thread_id:
+        slack_client.post_thread(channel, thread_id, text)
+    else:
+        print(f"[worker] {text}")
+
+
 def _report_incomplete(case: dict, missing: list[str]) -> None:
     detail = "\n  - ".join(missing)
-    msg = f"⚠️ case {case['case_id']} 審查未完整,未開 PR。缺:\n  - {detail}"
-    if _source_type(case) == "slack":
-        # TODO: slack post for source==slack(slack_client 目前無 post 方法)
-        print(f"[worker][slack-TODO] {msg}")
-    else:
-        print(f"[worker] {msg}")
+    _reply(case, f"⚠️ case {case['case_id']} 審查未完整,未開 PR。缺:\n  - {detail}")
 
 
 def _report_scheduled(case: dict, result: str) -> None:
-    """排程任務的回報。本切片印 stdout;未來 digest 可貼審查頻道。"""
-    # TODO: 把 digest 摘要貼到審查頻道(source==slack/schedule 時)
+    """排程任務的回報(digest / poll-inbox 等);這些沒有對話 thread,印 stdout。"""
     print(f"[worker] {result}")
 
 
 def _report_done(case: dict, pr_result: str) -> None:
-    msg = f"✅ case {case['case_id']} 審查完成 → {pr_result}"
-    if _source_type(case) == "slack":
-        # TODO: slack post + @reviewer for source==slack
-        print(f"[worker][slack-TODO] {msg}")
-    else:
-        print(f"[worker] {msg}")
+    _reply(case, f"✅ case {case['case_id']} 審查完成 → {pr_result}")
+
+
+# --------------------------------------------------------------------------
+# 對話式 case:叫大腦(Claude 讀 brief)→ 兌現承諾(Python 執行+驗收)
+# --------------------------------------------------------------------------
+# 行動計畫 schema:Claude 只輸出意圖,副作用一律 Python 做(見 agents/case-agent.md)。
+_ACTION_PLAN_KEYS = ("reply_text", "run_review", "crystallize_pr", "new_status_note", "reasoning")
+
+
+def _build_case_agent_prompt(state: dict) -> str:
+    """組「大腦」prompt:inline case-agent brief + 這個 case 的對話 context + 既有理解。
+
+    與 _build_review_prompt 同精神(inline brief,不靠 slash command),但這是
+    對話判斷層,不是審查層——輸出是行動計畫 JSON,不碰檔案。
+    """
+    brief = (REPO_ROOT / "agents" / "case-agent.md").read_text(encoding="utf-8")
+    context_lines = "\n".join(
+        f"  [{m.get('ts','')}] {m.get('user','?')}: {m.get('text','')}"
+        for m in state.get("context", [])
+    ) or "  (尚無對話)"
+    doc_links = "\n".join(f"  - {l}" for l in state.get("doc_links", [])) or "  (無)"
+
+    return f"""{brief}
+
+=== 這個 case 的現況 ===
+case_id: {state.get('case_id')}
+version: {state.get('version')}（已產出過 verdict 草稿:{'是' if state.get('draft_msg_ts') else '否'}）
+你上次的理解 status_note: {state.get('status_note') or '(無)'}
+文件連結 doc_links:
+{doc_links}
+
+對話 context（依時間）:
+{context_lines}
+
+=== 你的任務 ===
+依 brief 判斷下一步,**只**輸出一個 JSON 行動計畫(不要任何其他文字、不要 markdown code fence）:
+{{"reply_text": "...", "run_review": false, "crystallize_pr": false, "new_status_note": "...", "reasoning": "..."}}
+"""
+
+
+def _parse_action_plan(raw: str) -> dict:
+    """從 Claude 輸出抽出行動計畫 JSON;寬鬆容忍包了 code fence 或前後雜訊。"""
+    text = raw.strip()
+    # 去掉可能的 ```json ... ``` 包裝
+    if text.startswith("```"):
+        text = text.split("```", 2)[1] if text.count("```") >= 2 else text
+        if text.startswith("json"):
+            text = text[4:]
+    # 取第一個 { 到最後一個 } 之間
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start:end + 1]
+    plan = json.loads(text)
+    # 正規化:補預設,避免下游 KeyError
+    return {
+        "reply_text": plan.get("reply_text", ""),
+        "run_review": bool(plan.get("run_review", False)),
+        "crystallize_pr": bool(plan.get("crystallize_pr", False)),
+        "new_status_note": plan.get("new_status_note", ""),
+        "reasoning": plan.get("reasoning", ""),
+    }
+
+
+def _decide(state: dict) -> dict:
+    """叫起 Claude 讀 brief + context,回傳行動計畫 dict。
+
+    這是「路徑」層(model 推理)。測試可 monkeypatch 此函式餵假行動計畫,
+    驗證下游「承諾」層(Python 兌現)而不真叫 model。
+    """
+    prompt = _build_case_agent_prompt(state)
+    argv = [
+        config.claude_cmd,
+        "-p", prompt,
+        "--model", config.claude_model,
+        "--output-format", "json",
+        "--append-system-prompt",
+        "你是審查同事的對話大腦。只輸出一個 JSON 行動計畫,不要開 PR / commit / 貼訊息——"
+        "那些是外圈 Python 的事。你只在 JSON 裡『請求』。",
+    ]
+    proc = subprocess.run(
+        argv, cwd=str(REPO_ROOT), capture_output=True, text=True,
+        timeout=CLAUDE_TIMEOUT_SECONDS,
+    )
+    # claude --output-format json 會把模型輸出包在 {"result": "..."} 裡;容忍兩種
+    out = proc.stdout.strip()
+    try:
+        wrapper = json.loads(out)
+        inner = wrapper.get("result", out) if isinstance(wrapper, dict) else out
+    except json.JSONDecodeError:
+        inner = out
+    return _parse_action_plan(inner)
+
+
+def _execute_action_plan(case: dict, state: dict, plan: dict) -> None:
+    """★承諾層:逐項兌現行動計畫,Python 做副作用 + 驗收。絕不讓 model 直接開 PR。
+
+    順序:跑審查(若請求)→ 回貼 reply → 結晶 PR(若請求且產出齊全)→ 持久化理解。
+    """
+    case_id = case["case_id"]
+
+    # 1) run_review:跑(或重跑)審查;Python 做完整性驗收,缺就不往下走
+    review_ok = False
+    if plan["run_review"]:
+        ws = setup_workspace(case, fresh=(state.get("version", 0) > state.get("reviewed_version", -1)))
+        proc = invoke_review(ws, case_id)
+        if proc.returncode != 0:
+            print(f"[worker] claude 退出碼 {proc.returncode}(軟失敗,仍驗收產出)")
+            if proc.stderr:
+                print(f"[worker] stderr 末段:{proc.stderr[-800:]}")
+        ok, missing = outputs_complete(ws)
+        if ok:
+            review_ok = True
+            state["reviewed_version"] = state.get("version", 0)
+        else:
+            _report_incomplete(case, missing)
+
+    # 2) reply_text:把話貼回 thread(reporter seam)
+    if plan["reply_text"]:
+        _reply(case, plan["reply_text"])
+
+    # 3) crystallize_pr:★只有 Python 決定才開——且必須有齊全產出(鐵律 #1)
+    if plan["crystallize_pr"]:
+        ws = config.workspace_dir(case_id)
+        ok, missing = outputs_complete(ws)
+        if ok:
+            pr_result = git_ops.open_review_pr(case)
+            _report_done(case, pr_result)
+        else:
+            _report_incomplete(case, missing)
+
+    # 4) 持久化 Claude 的最新理解(跨輪記憶)
+    if plan["new_status_note"]:
+        state["status_note"] = plan["new_status_note"]
+    case_store.save(case_id, state)
+
+
+def _handle_case_activity(signal: dict) -> None:
+    """對話式 case 的一輪:load + drain → 叫大腦 → 兌現承諾。
+
+    signal 是 inbox.enqueue_case_activity 丟的輕量信號;真正的 context 在 case_store。
+    """
+    case_id = signal["case_id"]
+    state = case_store.load(case_id)
+    if state is None:
+        print(f"[worker] 孤兒 case-activity 信號(state 不存在):{case_id},丟棄。")
+        return
+
+    case_store.drain_inbox(case_id)
+    state = case_store.load(case_id)  # drain 後重讀,拿到累積的 context
+
+    # 把 case_store state 補成 review pipeline 認得的 case 形狀(channel/thread/source)
+    case = {
+        "case_id": case_id,
+        "channel": state.get("channel", ""),
+        "thread_id": state.get("thread_id", ""),
+        "submitter": state.get("submitter", ""),
+        "source": {"type": "inbox", "thread_id": state.get("thread_id", "")},
+        "doc_links": state.get("doc_links", []),
+        "files": [],
+        "version": state.get("version", 0),
+        "status_note": state.get("status_note", ""),
+        "created_at": state.get("created_at", ""),
+    }
+
+    plan = _decide(state)
+    print(f"[worker] case {case_id} 行動計畫:run_review={plan['run_review']} "
+          f"crystallize_pr={plan['crystallize_pr']} reply={'有' if plan['reply_text'] else '無'}"
+          f"（{plan.get('reasoning','')}）")
+    _execute_action_plan(case, state, plan)
 
 
 # --------------------------------------------------------------------------
 # 主流程
 # --------------------------------------------------------------------------
 def _run_review_case(case: dict) -> None:
-    """跑一個 review case 的完整內外圈。"""
+    """跑一個 review case 的完整內外圈(local / 直接審查 fast path)。"""
     case_id = case["case_id"]
     ws = setup_workspace(case)
 
@@ -296,6 +497,8 @@ def run_once() -> bool:
     try:
         if ctype == "review":
             _run_review_case(case)
+        elif ctype == "case-activity":
+            _handle_case_activity(case)
         else:
             # digest / reminder / patrol:排程任務,走同一條 dispatch(無 model,外圈做)。
             from . import scheduled_tasks
@@ -305,7 +508,7 @@ def run_once() -> bool:
             else:
                 result = handler(case)
                 _report_scheduled(case, result)
-        queue.mark_done(case["case_id"])
+        queue.mark_done(case)
     except Exception:  # 硬失敗:留在 processing/ 供重撈,別 mark_done
         import traceback
         print(f"[worker] 處理 case {case.get('case_id')} 失敗,保留在 processing/ 供重試:")
